@@ -10,6 +10,7 @@ function buildRecord(overrides: Partial<UsageRecord> = {}): UsageRecord {
     userId: "user-1",
     provider: "local-mock",
     model: "sim-local",
+    tokenizerType: "tiktoken",
     promptTokensEstimated: 10,
     completionTokensEstimated: 5,
     promptTokensActual: 10,
@@ -62,5 +63,8 @@ describe("UsageRepository", () => {
     const daily = repository.daily({ userId: "user-1" });
     expect(daily).toHaveLength(1);
     expect(daily[0]?.totalTokens).toBe(32);
+
+    const records = repository.list({ userId: "user-1" });
+    expect(records[0]?.tokenizerType).toBe("tiktoken");
   });
 });

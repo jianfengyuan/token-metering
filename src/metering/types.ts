@@ -19,12 +19,14 @@ export interface CostBreakdown {
 }
 
 export type UsageStatus = "success" | "failed";
+export type TokenizerType = "huggingface" | "tiktoken";
 
 export interface UsageRecord {
   requestId: string;
   userId: string;
   provider: string;
   model: string;
+  tokenizerType: TokenizerType;
   promptTokensEstimated: number;
   completionTokensEstimated: number;
   promptTokensActual: number;
@@ -53,9 +55,11 @@ export interface MeteringContext {
   startedAtMs: number;
   createdAt: string;
   estimatedPromptTokens: number;
+  tokenizerType: TokenizerType;
 }
 
 export interface MeteringFinalizeInput {
   completionText: string;
+  reasoningText?: string;
   providerUsage?: Partial<UsageBreakdown>;
 }

@@ -32,18 +32,30 @@ export class UsageRepository {
     const sqlPath = schemaPath ?? path.resolve(process.cwd(), "src", "db", "schema.sql");
     const schemaSql = fs.readFileSync(sqlPath, "utf8");
     this.db.exec(schemaSql);
+    this.ensureUsageEventsColumns();
+  }
+
+  private ensureUsageEventsColumns(): void {
+    const columns = this.db.prepare("PRAGMA table_info(usage_events)").all() as Array<{ name: string }>;
+    const columnNames = new Set(columns.map((column) => column.name));
+
+    if (!columnNames.has("tokenizer_type")) {
+      this.db.exec("ALTER TABLE usage_events ADD COLUMN tokenizer_type TEXT NOT NULL DEFAULT 'tiktoken'");
+    }
   }
 
   save(record: UsageRecord): UsageRecord {
     const insert = this.db.prepare(`
       INSERT INTO usage_events (
         request_id, user_id, provider, model,
+        tokenizer_type,
         prompt_tokens_estimated, completion_tokens_estimated,
         prompt_tokens_actual, completion_tokens_actual, total_tokens_actual,
         currency, cost_input, cost_output, cost_total,
         latency_ms, status, error_code, created_at
       ) VALUES (
         @requestId, @userId, @provider, @model,
+        @tokenizerType,
         @promptTokensEstimated, @completionTokensEstimated,
         @promptTokensActual, @completionTokensActual, @totalTokensActual,
         @currency, @costInput, @costOutput, @costTotal,
@@ -56,6 +68,7 @@ export class UsageRepository {
       userId: record.userId,
       provider: record.provider,
       model: record.model,
+      tokenizerType: record.tokenizerType,
       promptTokensEstimated: record.promptTokensEstimated,
       completionTokensEstimated: record.completionTokensEstimated,
       promptTokensActual: record.promptTokensActual,
@@ -154,6 +167,7 @@ export class UsageRepository {
         `
         SELECT
           request_id, user_id, provider, model,
+          tokenizer_type,
           prompt_tokens_estimated, completion_tokens_estimated,
           prompt_tokens_actual, completion_tokens_actual, total_tokens_actual,
           currency, cost_input, cost_output, cost_total,
@@ -168,6 +182,7 @@ export class UsageRepository {
       user_id: string;
       provider: string;
       model: string;
+      tokenizer_type: UsageRecord["tokenizerType"];
       prompt_tokens_estimated: number;
       completion_tokens_estimated: number;
       prompt_tokens_actual: number;
@@ -188,6 +203,7 @@ export class UsageRepository {
       userId: row.user_id,
       provider: row.provider,
       model: row.model,
+      tokenizerType: row.tokenizer_type,
       promptTokensEstimated: row.prompt_tokens_estimated,
       completionTokensEstimated: row.completion_tokens_estimated,
       promptTokensActual: row.prompt_tokens_actual,

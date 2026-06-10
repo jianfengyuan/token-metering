@@ -41,8 +41,8 @@ export function createSimulatorRouter(): Router {
 
     const input = parsed.data;
     const content = buildCompletion(input.messages);
-    const promptTokens = estimatePromptTokens(input.messages);
-    const completionTokens = estimateCompletionTokens(content);
+    const promptTokens = estimatePromptTokens(input.model, input.messages);
+    const completionTokens = estimateCompletionTokens(input.model, content);
     const usage = {
       prompt_tokens: promptTokens,
       completion_tokens: completionTokens,
@@ -130,8 +130,8 @@ export function createSimulatorRouter(): Router {
       model: input.model,
       data,
       usage: {
-        prompt_tokens: inputs.reduce((sum, text) => sum + estimateCompletionTokens(text), 0),
-        total_tokens: inputs.reduce((sum, text) => sum + estimateCompletionTokens(text), 0)
+        prompt_tokens: inputs.reduce((sum, text) => sum + estimateCompletionTokens(input.model, text), 0),
+        total_tokens: inputs.reduce((sum, text) => sum + estimateCompletionTokens(input.model, text), 0)
       }
     });
   });

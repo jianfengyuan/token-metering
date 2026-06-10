@@ -1,24 +1,29 @@
 import { v4 as uuidv4 } from "uuid";
 import { calculateCost } from "./cost.js";
-import { estimateCompletionTokens, estimatePromptTokens } from "./tokenizer.js";
+import { estimateCompletionTokens, estimatePromptTokens, resolveTokenizerType } from "./tokenizer.js";
 import type { MeteringContext, MeteringFinalizeInput, MeteringStartInput, UsageRecord } from "./types.js";
 
 export class MeteringService {
   begin(input: MeteringStartInput): MeteringContext {
+    const {userId, provider, model} = input;
     const now = Date.now();
     return {
       requestId: uuidv4(),
-      userId: input.userId,
-      provider: input.provider,
-      model: input.model,
+      userId,
+      provider,
+      model,
       startedAtMs: now,
       createdAt: new Date(now).toISOString(),
-      estimatedPromptTokens: estimatePromptTokens(input.messages)
+      estimatedPromptTokens: estimatePromptTokens(model, input.messages),
+      tokenizerType: resolveTokenizerType(model)
     };
   }
 
   finalize(context: MeteringContext, input: MeteringFinalizeInput): UsageRecord {
-    const estimatedCompletionTokens = estimateCompletionTokens(input.completionText);
+    const estimatedCompletionSource = [input.completionText, input.reasoningText]
+      .filter((text): text is string => typeof text === "string" && text.trim().length > 0)
+      .join("\n");
+    const estimatedCompletionTokens = estimateCompletionTokens(context.model, estimatedCompletionSource);
     const promptTokensActual = input.providerUsage?.promptTokens ?? context.estimatedPromptTokens;
     const completionTokensActual = input.providerUsage?.completionTokens ?? estimatedCompletionTokens;
     const totalTokensActual = input.providerUsage?.totalTokens ?? promptTokensActual + completionTokensActual;
@@ -29,6 +34,7 @@ export class MeteringService {
       userId: context.userId,
       provider: context.provider,
       model: context.model,
+      tokenizerType: context.tokenizerType,
       promptTokensEstimated: context.estimatedPromptTokens,
       completionTokensEstimated: estimatedCompletionTokens,
       promptTokensActual,
@@ -53,6 +59,7 @@ export class MeteringService {
       userId: context.userId,
       provider: context.provider,
       model: context.model,
+      tokenizerType: context.tokenizerType,
       promptTokensEstimated: context.estimatedPromptTokens,
       completionTokensEstimated: 0,
       promptTokensActual: 0,

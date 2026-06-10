@@ -43,4 +43,25 @@ describe("MeteringService", () => {
     expect(record.completionTokensActual).toBeGreaterThan(0);
     expect(record.totalTokensActual).toBe(record.promptTokensActual + record.completionTokensActual);
   });
+
+  it("includes reasoning text in completion estimate", () => {
+    const service = new MeteringService();
+    const context = service.begin({
+      userId: "u1",
+      provider: "local-ollama",
+      model: "llama3.2",
+      messages: [{ role: "user", content: "explain briefly" }]
+    });
+
+    const withoutReasoning = service.finalize(context, {
+      completionText: "short answer"
+    });
+
+    const withReasoning = service.finalize(context, {
+      completionText: "short answer",
+      reasoningText: "long hidden reasoning trace for internal planning"
+    });
+
+    expect(withReasoning.completionTokensEstimated).toBeGreaterThan(withoutReasoning.completionTokensEstimated);
+  });
 });

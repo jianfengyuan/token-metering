@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS usage_events (
   user_id TEXT NOT NULL,
   provider TEXT NOT NULL,
   model TEXT NOT NULL,
+  tokenizer_type TEXT NOT NULL DEFAULT 'tiktoken',
   prompt_tokens_estimated INTEGER NOT NULL DEFAULT 0,
   completion_tokens_estimated INTEGER NOT NULL DEFAULT 0,
   prompt_tokens_actual INTEGER NOT NULL DEFAULT 0,

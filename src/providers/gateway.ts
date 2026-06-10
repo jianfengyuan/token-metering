@@ -1,6 +1,11 @@
 import { MockLocalProvider } from "./mockLocal.js";
 import { OpenAICompatibleProvider } from "./openaiCompatible.js";
-import type { ModelProvider, ProviderGenerateParams, ProviderGenerateResult } from "./base.js";
+import type {
+  ModelProvider,
+  ProviderGenerateParams,
+  ProviderGenerateResult,
+  ProviderStreamResult
+} from "./base.js";
 
 export interface ProviderGatewayOptions {
   ollamaBaseUrl?: string;
@@ -50,5 +55,10 @@ export class ProviderGateway {
   async generate(providerId: string, params: ProviderGenerateParams): Promise<ProviderGenerateResult> {
     const provider = this.getProvider(providerId);
     return provider.generate(params);
+  }
+
+  async generateStream(providerId: string, params: ProviderGenerateParams): Promise<ProviderStreamResult> {
+    const provider = this.getProvider(providerId);
+    return provider.generateStream(params);
   }
 }

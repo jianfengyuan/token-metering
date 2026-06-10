@@ -15,6 +15,7 @@ describe("App integration", () => {
       userId: "u1",
       provider: "local-mock",
       model: "sim-local",
+      stream: false,
       messages: [{ role: "user", content: "hello token metering" }]
     });
 
@@ -27,6 +28,26 @@ describe("App integration", () => {
     expect(usageResponse.body.summary.count).toBe(1);
     expect(usageResponse.body.records).toHaveLength(1);
     expect(usageResponse.body.daily.length).toBeGreaterThan(0);
+  });
+
+  it("streams chat by default and still records usage", async () => {
+    const app = createApp();
+
+    const chatResponse = await request(app).post("/chat").send({
+      userId: "u-stream",
+      provider: "local-simulator",
+      model: "sim-local",
+      messages: [{ role: "user", content: "stream this response" }]
+    });
+
+    expect(chatResponse.status).toBe(200);
+    expect(chatResponse.headers["content-type"]).toContain("text/event-stream");
+    expect(chatResponse.text).toContain("data:");
+    expect(chatResponse.text).toContain("[DONE]");
+
+    const usageResponse = await request(app).get("/usage").query({ userId: "u-stream" });
+    expect(usageResponse.status).toBe(200);
+    expect(usageResponse.body.summary.count).toBe(1);
   });
 
   it("serves local simulator openai compatible response", async () => {

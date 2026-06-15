@@ -23,6 +23,9 @@ export type TokenizerType = "huggingface" | "tiktoken";
 
 export interface UsageRecord {
   requestId: string;
+  tenantId: string;
+  projectId: string;
+  apiKeyId: string;
   userId: string;
   provider: string;
   model: string;
@@ -41,6 +44,10 @@ export interface UsageRecord {
 }
 
 export interface MeteringStartInput {
+  requestId?: string;
+  tenantId: string;
+  projectId: string;
+  apiKeyId: string;
   userId: string;
   provider: string;
   model: string;
@@ -49,6 +56,9 @@ export interface MeteringStartInput {
 
 export interface MeteringContext {
   requestId: string;
+  tenantId: string;
+  projectId: string;
+  apiKeyId: string;
   userId: string;
   provider: string;
   model: string;
@@ -62,4 +72,9 @@ export interface MeteringFinalizeInput {
   completionText: string;
   reasoningText?: string;
   providerUsage?: Partial<UsageBreakdown>;
+}
+
+export interface QuotaReservationPlan {
+  reservedTokens: number;
+  reservedCost: number;
 }

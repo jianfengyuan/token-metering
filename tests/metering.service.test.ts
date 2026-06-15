@@ -5,6 +5,9 @@ describe("MeteringService", () => {
   it("uses provider usage when available", () => {
     const service = new MeteringService();
     const context = service.begin({
+      tenantId: "tenant-1",
+      projectId: "project-1",
+      apiKeyId: "key-1",
       userId: "u1",
       provider: "local-ollama",
       model: "llama3.2",
@@ -29,6 +32,9 @@ describe("MeteringService", () => {
   it("falls back to local estimate when provider usage missing", () => {
     const service = new MeteringService();
     const context = service.begin({
+      tenantId: "tenant-1",
+      projectId: "project-1",
+      apiKeyId: "key-1",
       userId: "u1",
       provider: "local-ollama",
       model: "llama3.2",
@@ -47,6 +53,9 @@ describe("MeteringService", () => {
   it("includes reasoning text in completion estimate", () => {
     const service = new MeteringService();
     const context = service.begin({
+      tenantId: "tenant-1",
+      projectId: "project-1",
+      apiKeyId: "key-1",
       userId: "u1",
       provider: "local-ollama",
       model: "llama3.2",
@@ -63,5 +72,22 @@ describe("MeteringService", () => {
     });
 
     expect(withReasoning.completionTokensEstimated).toBeGreaterThan(withoutReasoning.completionTokensEstimated);
+  });
+
+  it("builds quota reservation plan from prompt estimate", () => {
+    const service = new MeteringService(128);
+    const context = service.begin({
+      tenantId: "tenant-1",
+      projectId: "project-1",
+      apiKeyId: "key-1",
+      userId: "u1",
+      provider: "local-ollama",
+      model: "llama3.2",
+      messages: [{ role: "user", content: "quota test prompt" }]
+    });
+
+    const plan = service.buildQuotaReservationPlan(context);
+    expect(plan.reservedTokens).toBe(context.estimatedPromptTokens + 128);
+    expect(plan.reservedCost).toBeGreaterThanOrEqual(0);
   });
 });

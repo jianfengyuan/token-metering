@@ -1,10 +1,15 @@
-import fs from "node:fs";
-import path from "node:path";
-import type Database from "better-sqlite3";
+import { and, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
+import type { Pool } from "pg";
+import { usageDailyRollups, usageEvents } from "../db/postgres/schema.js";
+import type { DatabaseClient } from "../db/types.js";
 import type { UsageRecord } from "../metering/types.js";
 import { logger } from "../utils/logger.js";
 
 export interface UsageQuery {
+  tenantId: string;
+  projectId?: string;
+  apiKeyId?: string;
   userId?: string;
   provider?: string;
   model?: string;
@@ -14,6 +19,8 @@ export interface UsageQuery {
 
 export interface DailyRollup {
   date: string;
+  tenantId: string;
+  projectId: string;
   userId: string;
   provider: string;
   model: string;
@@ -25,46 +32,52 @@ export interface DailyRollup {
 }
 
 export class UsageRepository {
-  private readonly db: Database.Database;
+  private readonly pgOrm: NodePgDatabase;
 
-  constructor(db: Database.Database, schemaPath?: string) {
-    this.db = db;
-    const sqlPath = schemaPath ?? path.resolve(process.cwd(), "src", "db", "schema.sql");
-    const schemaSql = fs.readFileSync(sqlPath, "utf8");
-    this.db.exec(schemaSql);
-    this.ensureUsageEventsColumns();
-  }
-
-  private ensureUsageEventsColumns(): void {
-    const columns = this.db.prepare("PRAGMA table_info(usage_events)").all() as Array<{ name: string }>;
-    const columnNames = new Set(columns.map((column) => column.name));
-
-    if (!columnNames.has("tokenizer_type")) {
-      this.db.exec("ALTER TABLE usage_events ADD COLUMN tokenizer_type TEXT NOT NULL DEFAULT 'tiktoken'");
+  constructor(db: DatabaseClient) {
+    if (!db.nativeClient) {
+      throw new Error("PostgreSQL native client is required");
     }
+    this.pgOrm = drizzle(db.nativeClient as Pool);
   }
 
-  save(record: UsageRecord): UsageRecord {
-    const insert = this.db.prepare(`
-      INSERT INTO usage_events (
-        request_id, user_id, provider, model,
-        tokenizer_type,
-        prompt_tokens_estimated, completion_tokens_estimated,
-        prompt_tokens_actual, completion_tokens_actual, total_tokens_actual,
-        currency, cost_input, cost_output, cost_total,
-        latency_ms, status, error_code, created_at
-      ) VALUES (
-        @requestId, @userId, @provider, @model,
-        @tokenizerType,
-        @promptTokensEstimated, @completionTokensEstimated,
-        @promptTokensActual, @completionTokensActual, @totalTokensActual,
-        @currency, @costInput, @costOutput, @costTotal,
-        @latencyMs, @status, @errorCode, @createdAt
-      )
-    `);
+  private toNumber(value: unknown): number {
+    if (typeof value === "number") {
+      return value;
+    }
+    if (typeof value === "string") {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+    return 0;
+  }
 
-    insert.run({
+  private toIsoDate(value: unknown): string {
+    if (typeof value === "string") {
+      return value;
+    }
+    if (value instanceof Date) {
+      return value.toISOString();
+    }
+    return new Date().toISOString();
+  }
+
+  private toRollupDate(value: unknown): string {
+    if (typeof value === "string") {
+      return value.slice(0, 10);
+    }
+    if (value instanceof Date) {
+      return value.toISOString().slice(0, 10);
+    }
+    return "";
+  }
+
+  async save(record: UsageRecord): Promise<UsageRecord> {
+    await this.pgOrm.insert(usageEvents).values({
       requestId: record.requestId,
+      tenantId: record.tenantId,
+      projectId: record.projectId,
+      apiKeyId: record.apiKeyId,
       userId: record.userId,
       provider: record.provider,
       model: record.model,
@@ -75,49 +88,54 @@ export class UsageRepository {
       completionTokensActual: record.completionTokensActual,
       totalTokensActual: record.totalTokensActual,
       currency: record.cost.currency,
-      costInput: record.cost.inputCost,
-      costOutput: record.cost.outputCost,
-      costTotal: record.cost.totalCost,
+      costInput: String(record.cost.inputCost),
+      costOutput: String(record.cost.outputCost),
+      costTotal: String(record.cost.totalCost),
       latencyMs: record.latencyMs,
       status: record.status,
       errorCode: record.errorCode ?? null,
-      createdAt: record.createdAt
+      createdAt: new Date(record.createdAt)
     });
-
     if (record.status === "success") {
       const date = record.createdAt.slice(0, 10);
-      const upsertRollup = this.db.prepare(`
-        INSERT INTO usage_daily_rollups (
-          date, user_id, provider, model,
-          prompt_tokens, completion_tokens, total_tokens,
-          cost_total, currency
-        ) VALUES (
-          @date, @userId, @provider, @model,
-          @promptTokens, @completionTokens, @totalTokens,
-          @costTotal, @currency
-        )
-        ON CONFLICT(date, user_id, provider, model) DO UPDATE SET
-          prompt_tokens = prompt_tokens + excluded.prompt_tokens,
-          completion_tokens = completion_tokens + excluded.completion_tokens,
-          total_tokens = total_tokens + excluded.total_tokens,
-          cost_total = cost_total + excluded.cost_total
-      `);
-
-      upsertRollup.run({
-        date,
-        userId: record.userId,
-        provider: record.provider,
-        model: record.model,
-        promptTokens: record.promptTokensActual,
-        completionTokens: record.completionTokensActual,
-        totalTokens: record.totalTokensActual,
-        costTotal: record.cost.totalCost,
-        currency: record.cost.currency
-      });
+      await this.pgOrm
+        .insert(usageDailyRollups)
+        .values({
+          date,
+          tenantId: record.tenantId,
+          projectId: record.projectId,
+          userId: record.userId,
+          provider: record.provider,
+          model: record.model,
+          promptTokens: record.promptTokensActual,
+          completionTokens: record.completionTokensActual,
+          totalTokens: record.totalTokensActual,
+          costTotal: String(record.cost.totalCost),
+          currency: record.cost.currency
+        })
+        .onConflictDoUpdate({
+          target: [
+            usageDailyRollups.date,
+            usageDailyRollups.tenantId,
+            usageDailyRollups.projectId,
+            usageDailyRollups.userId,
+            usageDailyRollups.provider,
+            usageDailyRollups.model
+          ],
+          set: {
+            promptTokens: sql`${usageDailyRollups.promptTokens} + ${record.promptTokensActual}`,
+            completionTokens: sql`${usageDailyRollups.completionTokens} + ${record.completionTokensActual}`,
+            totalTokens: sql`${usageDailyRollups.totalTokens} + ${record.totalTokensActual}`,
+            costTotal: sql`${usageDailyRollups.costTotal} + ${record.cost.totalCost}`
+          }
+        });
     }
 
     logger.info("usage.repository.saved", {
       requestId: record.requestId,
+      tenantId: record.tenantId,
+      projectId: record.projectId,
+      apiKeyId: record.apiKeyId,
       userId: record.userId,
       provider: record.provider,
       model: record.model,
@@ -129,205 +147,204 @@ export class UsageRepository {
     return record;
   }
 
-  private buildWhereClause(query: UsageQuery): { clause: string; params: Record<string, string> } {
-    const conditions: string[] = [];
-    const params: Record<string, string> = {};
-
+  async list(query: UsageQuery): Promise<UsageRecord[]> {
+    const conditions = [eq(usageEvents.tenantId, query.tenantId)];
+    if (query.projectId) {
+      conditions.push(eq(usageEvents.projectId, query.projectId));
+    }
+    if (query.apiKeyId) {
+      conditions.push(eq(usageEvents.apiKeyId, query.apiKeyId));
+    }
     if (query.userId) {
-      conditions.push("user_id = @userId");
-      params.userId = query.userId;
+      conditions.push(eq(usageEvents.userId, query.userId));
     }
     if (query.provider) {
-      conditions.push("provider = @provider");
-      params.provider = query.provider;
+      conditions.push(eq(usageEvents.provider, query.provider));
     }
     if (query.model) {
-      conditions.push("model = @model");
-      params.model = query.model;
+      conditions.push(eq(usageEvents.model, query.model));
     }
     if (query.from) {
-      conditions.push("created_at >= @from");
-      params.from = query.from;
+      conditions.push(gte(usageEvents.createdAt, new Date(query.from)));
     }
     if (query.to) {
-      conditions.push("created_at <= @to");
-      params.to = query.to;
+      conditions.push(lte(usageEvents.createdAt, new Date(query.to)));
     }
-
-    return {
-      clause: conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "",
-      params
-    };
-  }
-
-  list(query: UsageQuery = {}): UsageRecord[] {
-    const { clause, params } = this.buildWhereClause(query);
-    const rows = this.db
-      .prepare(
-        `
-        SELECT
-          request_id, user_id, provider, model,
-          tokenizer_type,
-          prompt_tokens_estimated, completion_tokens_estimated,
-          prompt_tokens_actual, completion_tokens_actual, total_tokens_actual,
-          currency, cost_input, cost_output, cost_total,
-          latency_ms, status, error_code, created_at
-        FROM usage_events
-        ${clause}
-        ORDER BY created_at DESC
-      `
-      )
-      .all(params) as Array<{
-      request_id: string;
-      user_id: string;
-      provider: string;
-      model: string;
-      tokenizer_type: UsageRecord["tokenizerType"];
-      prompt_tokens_estimated: number;
-      completion_tokens_estimated: number;
-      prompt_tokens_actual: number;
-      completion_tokens_actual: number;
-      total_tokens_actual: number;
-      currency: string;
-      cost_input: number;
-      cost_output: number;
-      cost_total: number;
-      latency_ms: number;
-      status: "success" | "failed";
-      error_code: string | null;
-      created_at: string;
-    }>;
+    const rows = await this.pgOrm
+      .select({
+        request_id: usageEvents.requestId,
+        tenant_id: usageEvents.tenantId,
+        project_id: usageEvents.projectId,
+        api_key_id: usageEvents.apiKeyId,
+        user_id: usageEvents.userId,
+        provider: usageEvents.provider,
+        model: usageEvents.model,
+        tokenizer_type: usageEvents.tokenizerType,
+        prompt_tokens_estimated: usageEvents.promptTokensEstimated,
+        completion_tokens_estimated: usageEvents.completionTokensEstimated,
+        prompt_tokens_actual: usageEvents.promptTokensActual,
+        completion_tokens_actual: usageEvents.completionTokensActual,
+        total_tokens_actual: usageEvents.totalTokensActual,
+        currency: usageEvents.currency,
+        cost_input: usageEvents.costInput,
+        cost_output: usageEvents.costOutput,
+        cost_total: usageEvents.costTotal,
+        latency_ms: usageEvents.latencyMs,
+        status: usageEvents.status,
+        error_code: usageEvents.errorCode,
+        created_at: usageEvents.createdAt
+      })
+      .from(usageEvents)
+      .where(and(...conditions))
+      .orderBy(desc(usageEvents.createdAt));
 
     return rows.map((row) => ({
       requestId: row.request_id,
+      tenantId: row.tenant_id,
+      projectId: row.project_id,
+      apiKeyId: row.api_key_id,
       userId: row.user_id,
       provider: row.provider,
       model: row.model,
-      tokenizerType: row.tokenizer_type,
-      promptTokensEstimated: row.prompt_tokens_estimated,
-      completionTokensEstimated: row.completion_tokens_estimated,
-      promptTokensActual: row.prompt_tokens_actual,
-      completionTokensActual: row.completion_tokens_actual,
-      totalTokensActual: row.total_tokens_actual,
+      tokenizerType: row.tokenizer_type as UsageRecord["tokenizerType"],
+      promptTokensEstimated: this.toNumber(row.prompt_tokens_estimated),
+      completionTokensEstimated: this.toNumber(row.completion_tokens_estimated),
+      promptTokensActual: this.toNumber(row.prompt_tokens_actual),
+      completionTokensActual: this.toNumber(row.completion_tokens_actual),
+      totalTokensActual: this.toNumber(row.total_tokens_actual),
       usage: {
-        promptTokens: row.prompt_tokens_actual,
-        completionTokens: row.completion_tokens_actual,
-        totalTokens: row.total_tokens_actual
+        promptTokens: this.toNumber(row.prompt_tokens_actual),
+        completionTokens: this.toNumber(row.completion_tokens_actual),
+        totalTokens: this.toNumber(row.total_tokens_actual)
       },
       cost: {
         currency: row.currency,
-        inputCost: row.cost_input,
-        outputCost: row.cost_output,
-        totalCost: row.cost_total
+        inputCost: this.toNumber(row.cost_input),
+        outputCost: this.toNumber(row.cost_output),
+        totalCost: this.toNumber(row.cost_total)
       },
-      latencyMs: row.latency_ms,
-      status: row.status,
+      latencyMs: this.toNumber(row.latency_ms),
+      status: row.status as UsageRecord["status"],
       errorCode: row.error_code ?? undefined,
-      createdAt: row.created_at
+      createdAt: this.toIsoDate(row.created_at)
     }));
   }
 
-  summary(query: UsageQuery = {}): {
+  async summary(query: UsageQuery): Promise<{
     count: number;
     promptTokens: number;
     completionTokens: number;
     totalTokens: number;
     totalCost: number;
     currency: string;
-  } {
-    const { clause, params } = this.buildWhereClause(query);
-    const row = this.db
-      .prepare(
-        `
-        SELECT
-          COUNT(*) AS count,
-          COALESCE(SUM(prompt_tokens_actual), 0) AS prompt_tokens,
-          COALESCE(SUM(completion_tokens_actual), 0) AS completion_tokens,
-          COALESCE(SUM(total_tokens_actual), 0) AS total_tokens,
-          COALESCE(SUM(cost_total), 0) AS total_cost,
-          COALESCE(MAX(currency), 'USD') AS currency
-        FROM usage_events
-        ${clause}
-      `
-      )
-      .get(params) as {
-      count: number;
-      prompt_tokens: number;
-      completion_tokens: number;
-      total_tokens: number;
-      total_cost: number;
-      currency: string;
-    };
+  }> {
+    const conditions = [eq(usageEvents.tenantId, query.tenantId)];
+    if (query.projectId) {
+      conditions.push(eq(usageEvents.projectId, query.projectId));
+    }
+    if (query.apiKeyId) {
+      conditions.push(eq(usageEvents.apiKeyId, query.apiKeyId));
+    }
+    if (query.userId) {
+      conditions.push(eq(usageEvents.userId, query.userId));
+    }
+    if (query.provider) {
+      conditions.push(eq(usageEvents.provider, query.provider));
+    }
+    if (query.model) {
+      conditions.push(eq(usageEvents.model, query.model));
+    }
+    if (query.from) {
+      conditions.push(gte(usageEvents.createdAt, new Date(query.from)));
+    }
+    if (query.to) {
+      conditions.push(lte(usageEvents.createdAt, new Date(query.to)));
+    }
+
+    const rows = await this.pgOrm
+      .select({
+        count: sql<number>`COUNT(*)`,
+        prompt_tokens: sql<number>`COALESCE(SUM(${usageEvents.promptTokensActual}), 0)`,
+        completion_tokens: sql<number>`COALESCE(SUM(${usageEvents.completionTokensActual}), 0)`,
+        total_tokens: sql<number>`COALESCE(SUM(${usageEvents.totalTokensActual}), 0)`,
+        total_cost: sql<number>`COALESCE(SUM(${usageEvents.costTotal}), 0)`,
+        currency: sql<string>`COALESCE(MAX(${usageEvents.currency}), 'USD')`
+      })
+      .from(usageEvents)
+      .where(and(...conditions));
+    const row = rows[0];
+
+    if (!row) {
+      return {
+        count: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        totalCost: 0,
+        currency: "USD"
+      };
+    }
 
     return {
-      count: row.count,
-      promptTokens: row.prompt_tokens,
-      completionTokens: row.completion_tokens,
-      totalTokens: row.total_tokens,
-      totalCost: row.total_cost,
+      count: this.toNumber(row.count),
+      promptTokens: this.toNumber(row.prompt_tokens),
+      completionTokens: this.toNumber(row.completion_tokens),
+      totalTokens: this.toNumber(row.total_tokens),
+      totalCost: this.toNumber(row.total_cost),
       currency: row.currency
     };
   }
 
-  daily(query: UsageQuery = {}): DailyRollup[] {
-    const conditions: string[] = [];
-    const params: Record<string, string> = {};
-
+  async daily(query: UsageQuery): Promise<DailyRollup[]> {
+    const conditions = [eq(usageDailyRollups.tenantId, query.tenantId)];
+    if (query.projectId) {
+      conditions.push(eq(usageDailyRollups.projectId, query.projectId));
+    }
     if (query.userId) {
-      conditions.push("user_id = @userId");
-      params.userId = query.userId;
+      conditions.push(eq(usageDailyRollups.userId, query.userId));
     }
     if (query.provider) {
-      conditions.push("provider = @provider");
-      params.provider = query.provider;
+      conditions.push(eq(usageDailyRollups.provider, query.provider));
     }
     if (query.model) {
-      conditions.push("model = @model");
-      params.model = query.model;
+      conditions.push(eq(usageDailyRollups.model, query.model));
     }
     if (query.from) {
-      conditions.push("date >= @fromDate");
-      params.fromDate = query.from.slice(0, 10);
+      conditions.push(gte(usageDailyRollups.date, query.from.slice(0, 10)));
     }
     if (query.to) {
-      conditions.push("date <= @toDate");
-      params.toDate = query.to.slice(0, 10);
+      conditions.push(lte(usageDailyRollups.date, query.to.slice(0, 10)));
     }
 
-    const clause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-    const rows = this.db
-      .prepare(
-        `
-        SELECT
-          date, user_id, provider, model,
-          prompt_tokens, completion_tokens, total_tokens,
-          cost_total, currency
-        FROM usage_daily_rollups
-        ${clause}
-        ORDER BY date DESC
-      `
-      )
-      .all(params) as Array<{
-      date: string;
-      user_id: string;
-      provider: string;
-      model: string;
-      prompt_tokens: number;
-      completion_tokens: number;
-      total_tokens: number;
-      cost_total: number;
-      currency: string;
-    }>;
+    const rows = await this.pgOrm
+      .select({
+        date: usageDailyRollups.date,
+        tenant_id: usageDailyRollups.tenantId,
+        project_id: usageDailyRollups.projectId,
+        user_id: usageDailyRollups.userId,
+        provider: usageDailyRollups.provider,
+        model: usageDailyRollups.model,
+        prompt_tokens: usageDailyRollups.promptTokens,
+        completion_tokens: usageDailyRollups.completionTokens,
+        total_tokens: usageDailyRollups.totalTokens,
+        cost_total: usageDailyRollups.costTotal,
+        currency: usageDailyRollups.currency
+      })
+      .from(usageDailyRollups)
+      .where(and(...conditions))
+      .orderBy(desc(usageDailyRollups.date));
 
     return rows.map((row) => ({
-      date: row.date,
+      date: this.toRollupDate(row.date),
+      tenantId: row.tenant_id,
+      projectId: row.project_id,
       userId: row.user_id,
       provider: row.provider,
       model: row.model,
-      promptTokens: row.prompt_tokens,
-      completionTokens: row.completion_tokens,
-      totalTokens: row.total_tokens,
-      totalCost: row.cost_total,
+      promptTokens: this.toNumber(row.prompt_tokens),
+      completionTokens: this.toNumber(row.completion_tokens),
+      totalTokens: this.toNumber(row.total_tokens),
+      totalCost: this.toNumber(row.cost_total),
       currency: row.currency
     }));
   }

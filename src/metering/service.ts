@@ -1,14 +1,29 @@
 import { v4 as uuidv4 } from "uuid";
 import { calculateCost } from "./cost.js";
 import { estimateCompletionTokens, estimatePromptTokens, resolveTokenizerType } from "./tokenizer.js";
-import type { MeteringContext, MeteringFinalizeInput, MeteringStartInput, UsageRecord } from "./types.js";
+import type {
+  MeteringContext,
+  MeteringFinalizeInput,
+  MeteringStartInput,
+  QuotaReservationPlan,
+  UsageRecord
+} from "./types.js";
 
 export class MeteringService {
+  private readonly reservedCompletionTokens: number;
+
+  constructor(reservedCompletionTokens = 256) {
+    this.reservedCompletionTokens = reservedCompletionTokens;
+  }
+
   begin(input: MeteringStartInput): MeteringContext {
-    const {userId, provider, model} = input;
+    const { tenantId, projectId, apiKeyId, userId, provider, model } = input;
     const now = Date.now();
     return {
-      requestId: uuidv4(),
+      requestId: input.requestId ?? uuidv4(),
+      tenantId,
+      projectId,
+      apiKeyId,
       userId,
       provider,
       model,
@@ -16,6 +31,20 @@ export class MeteringService {
       createdAt: new Date(now).toISOString(),
       estimatedPromptTokens: estimatePromptTokens(model, input.messages),
       tokenizerType: resolveTokenizerType(model)
+    };
+  }
+
+  buildQuotaReservationPlan(context: MeteringContext): QuotaReservationPlan {
+    const reservedTokens = context.estimatedPromptTokens + this.reservedCompletionTokens;
+    const reservedCost = calculateCost(
+      context.model,
+      context.estimatedPromptTokens,
+      this.reservedCompletionTokens
+    ).totalCost;
+
+    return {
+      reservedTokens,
+      reservedCost
     };
   }
 
@@ -31,6 +60,9 @@ export class MeteringService {
 
     return {
       requestId: context.requestId,
+      tenantId: context.tenantId,
+      projectId: context.projectId,
+      apiKeyId: context.apiKeyId,
       userId: context.userId,
       provider: context.provider,
       model: context.model,
@@ -56,6 +88,9 @@ export class MeteringService {
     const cost = calculateCost(context.model, 0, 0);
     return {
       requestId: context.requestId,
+      tenantId: context.tenantId,
+      projectId: context.projectId,
+      apiKeyId: context.apiKeyId,
       userId: context.userId,
       provider: context.provider,
       model: context.model,

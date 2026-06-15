@@ -5,6 +5,8 @@
 - `/chat`：统一模型调用入口（provider 抽象，默认流式透传）
 - `/usage`：用量与成本查询（明细 + 日聚合）
 - `/simulator/v1/*`：本地 OpenAI 兼容模拟接口（无运营商时可直接开发）
+- `/admin/v1/*`：最小管理 API（创建租户/项目/API Key、模型路由、审计事件、用量概览）
+- `/console`：内置 Web 控制台（Chat 聊天页 + Admin 管理页）
 
 ## 快速开始
 
@@ -15,11 +17,28 @@ npm run dev
 
 默认启动端口：`3000`
 
+数据库后端统一使用 PostgreSQL，启动前请设置：
+
+```bash
+export DATABASE_URL="postgresql://admin:admin@127.0.0.1:5432/token_metering"
+```
+
+也可不使用 `DATABASE_URL`，改用 `PG_HOST` / `PG_PORT` / `PG_USER` / `PG_PASSWORD` / `PG_DATABASE`。
+
 健康检查：
 
 ```bash
 curl http://127.0.0.1:3000/health
 ```
+
+## Web 控制台
+
+启动服务后访问 `http://127.0.0.1:3000/console/`：
+
+- Chat 页：填入 API Key（开发默认 `tm_default_dev_key`）与模型，支持流式 SSE 渲染并显示 requestId。
+- Admin 页：填入 Admin Token（开发默认 `tm_admin_dev_token`，可用 `ADMIN_TOKEN` 环境变量覆盖），可创建租户/项目/API Key、查看模型路由、用量概览与审计事件。
+
+前端为纯静态文件（`public/console/`），由 Express 直接托管，无需构建步骤。
 
 ## 调用示例
 
@@ -89,7 +108,9 @@ export HF_TOKENIZER_REVISIONS='{"gemma":"main"}'
 可参考 `.env.example`：
 
 - `PORT`
-- `DATABASE_PATH`
+- `DATABASE_URL`（PostgreSQL 连接串，优先级最高）
+- `PG_HOST` / `PG_PORT` / `PG_USER` / `PG_PASSWORD` / `PG_DATABASE` / `PG_POOL_MAX`（`DATABASE_URL` 未设置时生效）
+- `ADMIN_TOKEN`（`/admin/v1` 管理 API 令牌，未设置时使用开发默认值 `tm_admin_dev_token`）
 - `LOCAL_SIMULATOR_BASE_URL`
 - `LOCAL_SIMULATOR_API_KEY`
 - `OLLAMA_BASE_URL`

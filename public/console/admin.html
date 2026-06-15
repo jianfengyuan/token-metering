@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin - Token Metering Console</title>
+  <link rel="stylesheet" href="./console.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Token <span>Metering</span></div>
+    <nav>
+      <a href="./index.html">Chat</a>
+      <a href="./admin.html" class="active">Admin</a>
+    </nav>
+  </header>
+
+  <div class="layout single">
+    <div class="admin-grid">
+      <div>
+        <div class="panel">
+          <h2>管理凭证</h2>
+          <p class="hint">Admin Token 仅保存在浏览器本地</p>
+          <div class="field">
+            <label for="admin-token">Admin Token</label>
+            <input id="admin-token" type="password" placeholder="ADMIN_TOKEN" autocomplete="off" />
+          </div>
+          <button id="refresh-all" class="secondary" type="button">刷新数据</button>
+        </div>
+
+        <div class="panel">
+          <h2>创建租户 / 项目 / API Key</h2>
+          <p class="hint">生成的 API Key 仅展示一次，请妥善保存</p>
+          <form id="create-form">
+            <div class="field-row">
+              <div class="field">
+                <label for="tenant-id">Tenant ID</label>
+                <input id="tenant-id" type="text" placeholder="tenant-acme" required />
+              </div>
+              <div class="field">
+                <label for="project-id">Project ID</label>
+                <input id="project-id" type="text" placeholder="project-app" required />
+              </div>
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label for="tenant-name">Tenant 名称（可选）</label>
+                <input id="tenant-name" type="text" placeholder="Acme Inc" />
+              </div>
+              <div class="field">
+                <label for="project-name">Project 名称（可选）</label>
+                <input id="project-name" type="text" placeholder="Main App" />
+              </div>
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label for="token-limit">Token 配额（可选）</label>
+                <input id="token-limit" type="number" min="1" placeholder="1000000" />
+              </div>
+              <div class="field">
+                <label for="cost-limit">成本配额（可选）</label>
+                <input id="cost-limit" type="number" min="0.01" step="0.01" placeholder="1000" />
+              </div>
+            </div>
+            <button type="submit">创建</button>
+          </form>
+          <div id="create-result" hidden></div>
+        </div>
+
+        <div class="panel">
+          <div class="section-head">
+            <h2>模型路由</h2>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>模型</th><th>Provider</th><th>Provider 模型</th></tr>
+              </thead>
+              <tbody id="routes-body">
+                <tr><td colspan="3" class="empty-row">暂无数据</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="panel">
+          <div class="section-head">
+            <h2>用量概览</h2>
+            <div class="field" style="margin: 0; width: 200px;">
+              <input id="usage-tenant" type="text" placeholder="tenant-default" />
+            </div>
+          </div>
+          <div class="stat-grid">
+            <div class="stat"><div class="stat-label">请求数</div><div class="stat-value" id="stat-count">-</div></div>
+            <div class="stat"><div class="stat-label">Prompt Tokens</div><div class="stat-value" id="stat-prompt">-</div></div>
+            <div class="stat"><div class="stat-label">Completion Tokens</div><div class="stat-value" id="stat-completion">-</div></div>
+            <div class="stat"><div class="stat-label">总成本</div><div class="stat-value" id="stat-cost">-</div></div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>时间</th><th>项目</th><th>模型</th><th>Provider</th><th>Tokens</th><th>成本</th><th>状态</th></tr>
+              </thead>
+              <tbody id="usage-body">
+                <tr><td colspan="7" class="empty-row">暂无数据</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="section-head">
+            <h2>最近审计事件</h2>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>时间</th><th>事件</th><th>结果</th><th>租户</th><th>模型</th><th>错误码</th></tr>
+              </thead>
+              <tbody id="audit-body">
+                <tr><td colspan="6" class="empty-row">暂无数据</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="./admin.js"></script>
+</body>
+</html>

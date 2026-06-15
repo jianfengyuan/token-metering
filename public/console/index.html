@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Chat - Token Metering Console</title>
+  <link rel="stylesheet" href="./console.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Token <span>Metering</span></div>
+    <nav>
+      <a href="./index.html" class="active">Chat</a>
+      <a href="./admin.html">Admin</a>
+    </nav>
+  </header>
+
+  <div class="layout">
+    <aside class="chat-sidebar">
+      <div class="panel">
+        <h2>连接设置</h2>
+        <p class="hint">API Key 仅保存在浏览器本地</p>
+        <div class="field">
+          <label for="api-key">API Key</label>
+          <input id="api-key" type="password" placeholder="tm_..." autocomplete="off" />
+        </div>
+        <div class="field">
+          <label for="model-select">模型</label>
+          <select id="model-select"></select>
+        </div>
+        <div class="field" id="custom-model-field" hidden>
+          <label for="custom-model">自定义模型名</label>
+          <input id="custom-model" type="text" placeholder="例如 llama3.2" />
+        </div>
+        <div class="field checkbox-row">
+          <input id="stream-toggle" type="checkbox" checked />
+          <label for="stream-toggle">流式输出（SSE）</label>
+        </div>
+        <button id="clear-chat" class="secondary" type="button">清空对话</button>
+      </div>
+    </aside>
+
+    <main class="chat-main">
+      <div class="chat-messages" id="messages">
+        <div class="chat-empty" id="chat-empty">
+          <strong>开始对话</strong>
+          填好 API Key 与模型后，在下方输入消息
+        </div>
+      </div>
+      <form class="chat-composer" id="composer">
+        <textarea id="input" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
+        <button id="send-btn" type="submit">发送</button>
+      </form>
+    </main>
+  </div>
+
+  <script src="./chat.js"></script>
+</body>
+</html>

@@ -4,6 +4,7 @@ export interface ProviderGenerateParams {
   model: string;
   messages: ChatMessage[];
   stream?: boolean;
+  signal?: AbortSignal;
 }
 
 export interface ProviderGenerateResult {

@@ -2,3 +2,9 @@ node_modules
 dist
 .DS_Store
 .env
+deploy/postgres/backups/
+.gitnexus
+AGENTS.md
+CLAUDE.md
+.claude/
+.vscode/

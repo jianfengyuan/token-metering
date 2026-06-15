@@ -1,0 +1,42 @@
+# ============================================================================
+# token-metering PostgreSQL 部署编排
+# ============================================================================
+# 使用方式：
+#   cp .env.example .env   # 并修改其中的密码等配置
+#   docker compose up -d   # 或使用同目录 deploy.sh 封装命令
+#
+# 说明：
+#   - 镜像版本通过 PG_IMAGE 固定（默认 postgres:17），生产环境建议钉到
+#     具体小版本（如 postgres:17.5）以保证可重复部署；
+#   - 数据持久化在命名卷 pgdata 中，容器删除后数据保留；
+#   - src/db/postgres/init.sql 挂载到 /docker-entrypoint-initdb.d/，
+#     仅在数据卷为空（首次初始化）时自动执行；后续手动重跑请用
+#     ./deploy.sh reinit（init.sql 本身幂等，可安全重复执行）；
+#   - 密码等敏感信息全部来自 .env，不在本文件中写死。
+# ============================================================================
+
+services:
+  postgres:
+    image: ${PG_IMAGE:-postgres:17}
+    container_name: ${PG_CONTAINER_NAME:-token-metering-pg}
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${PG_USER:-token_metering}
+      # :? 强制要求 .env 中提供密码，避免使用不安全的默认值
+      POSTGRES_PASSWORD: ${PG_PASSWORD:?请在 .env 中设置 PG_PASSWORD}
+      POSTGRES_DB: ${PG_DATABASE:-token_metering}
+    ports:
+      - "${PG_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      # 仅首次初始化（数据卷为空）时自动执行
+      - ../../src/db/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  pgdata:

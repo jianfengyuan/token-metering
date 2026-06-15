@@ -54,6 +54,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
     const startedAt = Date.now();
     logger.info(fn, {
       providerId: this.id,
+      provider: this.id,
       model: params.model,
       stream: false
     });
@@ -64,6 +65,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
       const errorText = await response.text();
       logger.error(fn, {
         providerId: this.id,
+        provider: this.id,
         model: params.model,
         stream: false,
         status: response.status,
@@ -79,6 +81,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
     const usage = normalizeUsage(json.usage);
     logger.info(fn, {
       providerId: this.id,
+      provider: this.id,
       model: params.model,
       stream: false,
       durationMs: Date.now() - startedAt,
@@ -100,6 +103,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
     const startedAt = Date.now();
     logger.info(fn, {
       providerId: this.id,
+      provider: this.id,
       model: params.model,
       stream: true
     });
@@ -109,6 +113,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
       const errorText = await response.text();
       logger.error(fn, {
         providerId: this.id,
+        provider: this.id,
         model: params.model,
         stream: true,
         status: response.status,
@@ -126,6 +131,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
       .then((result) => {
         logger.info(fn, {
           providerId: this.id,
+          provider: this.id,
           model: params.model,
           stream: true,
           durationMs: Date.now() - startedAt,
@@ -137,6 +143,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
       .catch((error) => {
         logger.error(fn, {
           providerId: this.id,
+          provider: this.id,
           model: params.model,
           stream: true,
           durationMs: Date.now() - startedAt,
@@ -159,6 +166,7 @@ export class OpenAICompatibleProvider implements ModelProvider {
         "Content-Type": "application/json",
         Authorization: `Bearer ${this.apiKey}`
       },
+      signal: params.signal,
       body: JSON.stringify({
         model: params.model,
         messages: params.messages,

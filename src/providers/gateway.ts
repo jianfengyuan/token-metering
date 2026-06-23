@@ -40,15 +40,18 @@ export interface ResilientProviderResult<T> {
 }
 
 export interface ProviderGatewayOptions {
-  ollamaBaseUrl?: string;
-  ollamaApiKey?: string;
-  simulatorBaseUrl?: string;
-  simulatorApiKey?: string;
   modelRoutes?: ProviderModelRoute[];
   providers?: ModelProvider[];
   requestTimeoutMs?: number;
   maxRetries?: number;
   retryBackoffMs?: number;
+}
+
+export interface ExternalProviderConfig {
+  providerId: string;
+  providerType: string;
+  baseUrl: string;
+  apiKey: string;
 }
 
 export class ModelRouteNotFoundError extends Error {
@@ -61,76 +64,56 @@ export class ModelRouteNotFoundError extends Error {
 }
 
 export class ProviderGateway {
-  private readonly providers: Map<string, ModelProvider>;
+  private readonly injectedProviders: Map<string, ModelProvider>;
+  private providers: Map<string, ModelProvider>;
   private readonly modelRoutes: Map<string, ProviderModelRoute>;
   private readonly requestTimeoutMs: number;
   private readonly maxRetries: number;
   private readonly retryBackoffMs: number;
 
   constructor(options: ProviderGatewayOptions = {}) {
-    const ollamaBaseUrl = options.ollamaBaseUrl ?? "http://127.0.0.1:11434/v1";
-    const ollamaApiKey = options.ollamaApiKey ?? "local-dev";
-    const simulatorBaseUrl = options.simulatorBaseUrl ?? "http://127.0.0.1:3000/simulator/v1";
-    const simulatorApiKey = options.simulatorApiKey ?? "local-dev";
     this.requestTimeoutMs = options.requestTimeoutMs ?? Number(process.env.PROVIDER_TIMEOUT_MS ?? "15000");
     this.maxRetries = options.maxRetries ?? Number(process.env.PROVIDER_RETRY_MAX ?? "1");
     this.retryBackoffMs = options.retryBackoffMs ?? Number(process.env.PROVIDER_RETRY_BACKOFF_MS ?? "150");
 
-    const providerEntries: Array<[string, ModelProvider]> = [
-      [
-        "local-ollama",
-        new OpenAICompatibleProvider({
-          id: "local-ollama",
-          baseUrl: ollamaBaseUrl,
-          apiKey: ollamaApiKey
-        })
-      ],
-      [
-        "local-simulator",
-        new OpenAICompatibleProvider({
-          id: "local-simulator",
-          baseUrl: simulatorBaseUrl,
-          apiKey: simulatorApiKey
-        })
-      ],
-      ["local-mock", new MockLocalProvider()]
-    ];
+    const providerEntries: Array<[string, ModelProvider]> = [];
     for (const provider of options.providers ?? []) {
       providerEntries.push([provider.id, provider]);
     }
-    this.providers = new Map<string, ModelProvider>(providerEntries);
+    this.injectedProviders = new Map<string, ModelProvider>(providerEntries);
+    this.providers = new Map<string, ModelProvider>(this.injectedProviders);
 
     this.modelRoutes = new Map<string, ProviderModelRoute>();
-    this.setModelRoutes(
-      options.modelRoutes ?? [
-        {
-          model: "sim-local",
-          providerId: "local-simulator",
-          providerModel: "sim-local",
-          fallbackProviderId: "local-mock",
-          fallbackProviderModel: "sim-local"
-        },
-        {
-          model: "llama3.2",
-          providerId: "local-ollama",
-          providerModel: "gemma4:e2b",
-          fallbackProviderId: "local-simulator",
-          fallbackProviderModel: "sim-local"
-        },
-        {
-          model: "gpt-4o-mini",
-          providerId: "local-simulator",
-          providerModel: "sim-local",
-          fallbackProviderId: "local-mock",
-          fallbackProviderModel: "sim-local"
-        },
-        {
-          model: "mock-default",
-          providerId: "local-mock",
-          providerModel: "sim-local"
-        }
-      ]
-    );
+    this.setModelRoutes(options.modelRoutes ?? []);
+  }
+
+  setExternalProviders(configs: ExternalProviderConfig[]): void {
+    const nextProviders = new Map<string, ModelProvider>(this.injectedProviders);
+    for (const config of configs) {
+      if (!config.providerId || !config.baseUrl || !config.apiKey) {
+        continue;
+      }
+      if (config.providerType === "openai_compatible") {
+        nextProviders.set(
+          config.providerId,
+          new OpenAICompatibleProvider({
+            id: config.providerId,
+            baseUrl: config.baseUrl,
+            apiKey: config.apiKey
+          })
+        );
+        continue;
+      }
+      if (config.providerType === "mock_local") {
+        nextProviders.set(config.providerId, new MockLocalProvider());
+        continue;
+      }
+      logger.warn("provider.config.unsupported_type", {
+        providerId: config.providerId,
+        providerType: config.providerType
+      });
+    }
+    this.providers = nextProviders;
   }
 
   setModelRoutes(routes: ProviderModelRoute[]): void {
@@ -179,6 +162,14 @@ export class ProviderGateway {
     }
 
     throw new ModelRouteNotFoundError(model);
+  }
+
+  hasProvider(providerId: string): boolean {
+    return this.providers.has(providerId);
+  }
+
+  listProviderIds(): string[] {
+    return [...this.providers.keys()];
   }
 
   getProvider(providerId: string): ModelProvider {

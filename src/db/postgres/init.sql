@@ -16,12 +16,38 @@
 -- 设计说明：
 --   1. 时间字段使用 TIMESTAMPTZ，金额字段使用 NUMERIC(18, 6)。
 --   2. usage_events / audit_events 主键使用 BIGINT IDENTITY。
---   3. model_routes.is_active 使用 BOOLEAN。
+--   3. model_provider_routes.is_active 使用 BOOLEAN。
 --   4. audit_events.metadata_json 使用 JSONB。
 --   5. usage_daily_rollups.date 使用 DATE。
 -- ============================================================================
 
 BEGIN;
+
+-- ----------------------------------------------------------------------------
+-- 兼容旧表名迁移（provider_configs / model_routes -> 新表名）
+-- ----------------------------------------------------------------------------
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'provider_configs'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'upstream_providers'
+  ) THEN
+    ALTER TABLE provider_configs RENAME TO upstream_providers;
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'model_routes'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'model_provider_routes'
+  ) THEN
+    ALTER TABLE model_routes RENAME TO model_provider_routes;
+  END IF;
+END $$;
 
 -- ----------------------------------------------------------------------------
 -- 表结构
@@ -64,13 +90,23 @@ CREATE TABLE IF NOT EXISTS project_quotas (
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS model_routes (
+CREATE TABLE IF NOT EXISTS model_provider_routes (
   model          TEXT PRIMARY KEY,
   provider_id    TEXT NOT NULL,
   provider_model TEXT NOT NULL,
   -- 路由激活状态使用原生 BOOLEAN
   is_active      BOOLEAN NOT NULL DEFAULT TRUE,
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS upstream_providers (
+  provider_id   TEXT PRIMARY KEY,
+  provider_type TEXT NOT NULL,
+  base_url      TEXT NOT NULL,
+  -- TODO: 生产环境建议改为 secret_ref，避免明文存储
+  api_key       TEXT NOT NULL,
+  is_active     BOOLEAN NOT NULL DEFAULT TRUE,
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE IF NOT EXISTS usage_events (
@@ -140,7 +176,8 @@ CREATE TABLE IF NOT EXISTS audit_events (
 CREATE INDEX IF NOT EXISTS idx_projects_tenant_id ON projects(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_api_keys_project_id ON api_keys(project_id);
 CREATE INDEX IF NOT EXISTS idx_api_keys_status ON api_keys(status);
-CREATE INDEX IF NOT EXISTS idx_model_routes_active ON model_routes(is_active);
+CREATE INDEX IF NOT EXISTS idx_model_provider_routes_active ON model_provider_routes(is_active);
+CREATE INDEX IF NOT EXISTS idx_upstream_providers_active ON upstream_providers(is_active);
 
 CREATE INDEX IF NOT EXISTS idx_usage_events_tenant_time ON usage_events(tenant_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_usage_events_project_time ON usage_events(project_id, created_at);
@@ -159,6 +196,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_events_request_id ON audit_events(request_i
 -- ----------------------------------------------------------------------------
 -- 种子数据（对应 AccessRepository.seedDefaults，幂等）
 -- ----------------------------------------------------------------------------
+-- 注意：upstream_providers / model_provider_routes 不再提供默认种子，请在启动服务前执行
+-- `npm run init:platform -- ./platform.init.json` 完成平台初始化。
 
 INSERT INTO tenants (id, name, status, created_at)
 VALUES ('tenant-default', 'Default Tenant', 'active', now())
@@ -191,14 +230,5 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO project_quotas (project_id, token_limit, token_used, cost_limit, cost_used, updated_at)
 VALUES ('project-default', 1000000, 0, 1000, 0, now())
 ON CONFLICT (project_id) DO NOTHING;
-
--- 默认模型路由（与 AccessRepository.seedDefaults 一致）
-INSERT INTO model_routes (model, provider_id, provider_model, is_active, updated_at)
-VALUES
-  ('sim-local',    'local-simulator', 'sim-local', TRUE, now()),
-  ('llama3.2',     'local-ollama',    'llama3.2',  TRUE, now()),
-  ('gpt-4o-mini',  'local-simulator', 'sim-local', TRUE, now()),
-  ('mock-default', 'local-mock',      'sim-local', TRUE, now())
-ON CONFLICT (model) DO NOTHING;
 
 COMMIT;

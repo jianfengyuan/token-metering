@@ -52,19 +52,31 @@ class FlakyProvider extends StaticProvider {
 
 describe("ProviderGateway routing", () => {
   it("resolves configured model route", () => {
-    const gateway = new ProviderGateway();
+    const gateway = new ProviderGateway({
+      providers: [new StaticProvider("test-sim", "ok")],
+      modelRoutes: [
+        {
+          model: "sim-local",
+          providerId: "test-sim",
+          providerModel: "sim-local"
+        }
+      ]
+    });
     const route = gateway.resolveModelRoute("sim-local");
 
-    expect(route.providerId).toBe("local-simulator");
+    expect(route.providerId).toBe("test-sim");
     expect(route.providerModel).toBe("sim-local");
     expect(route.source).toBe("model_route");
   });
 
   it("falls back to legacy provider for backward compatibility", () => {
-    const gateway = new ProviderGateway({ modelRoutes: [] });
-    const route = gateway.resolveModelRoute("custom-model", "local-mock");
+    const gateway = new ProviderGateway({
+      providers: [new StaticProvider("legacy-provider", "legacy")],
+      modelRoutes: []
+    });
+    const route = gateway.resolveModelRoute("custom-model", "legacy-provider");
 
-    expect(route.providerId).toBe("local-mock");
+    expect(route.providerId).toBe("legacy-provider");
     expect(route.providerModel).toBe("custom-model");
     expect(route.source).toBe("legacy_provider");
   });
@@ -73,6 +85,41 @@ describe("ProviderGateway routing", () => {
     const gateway = new ProviderGateway({ modelRoutes: [] });
 
     expect(() => gateway.resolveModelRoute("unknown-model")).toThrowError(ModelRouteNotFoundError);
+  });
+
+  it("loads external openai-compatible providers from config", () => {
+    const gateway = new ProviderGateway({ modelRoutes: [] });
+    gateway.setExternalProviders([
+      {
+        providerId: "openai",
+        providerType: "openai_compatible",
+        baseUrl: "https://api.openai.com/v1",
+        apiKey: "sk-test"
+      },
+      {
+        providerId: "deepseek",
+        providerType: "openai_compatible",
+        baseUrl: "https://api.deepseek.com/v1",
+        apiKey: "deepseek-test-key"
+      }
+    ]);
+
+    expect(gateway.hasProvider("openai")).toBe(true);
+    expect(gateway.hasProvider("deepseek")).toBe(true);
+  });
+
+  it("ignores unsupported external provider types", () => {
+    const gateway = new ProviderGateway({ modelRoutes: [] });
+    gateway.setExternalProviders([
+      {
+        providerId: "anthropic",
+        providerType: "anthropic_native",
+        baseUrl: "https://api.anthropic.com/v1",
+        apiKey: "test"
+      }
+    ]);
+
+    expect(gateway.hasProvider("anthropic")).toBe(false);
   });
 
   it("retries provider call and eventually succeeds", async () => {

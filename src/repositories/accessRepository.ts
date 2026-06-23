@@ -2,7 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
-import { apiKeys, modelRoutes, projectQuotas, projects, tenants } from "../db/postgres/schema.js";
+import { apiKeys, modelProviderRoutes, projectQuotas, projects, tenants, upstreamProviders } from "../db/postgres/schema.js";
 import type { DatabaseClient } from "../db/types.js";
 
 export interface AccessRepositoryOptions {
@@ -31,6 +31,26 @@ export interface ModelRoute {
   model: string;
   providerId: string;
   providerModel: string;
+}
+
+export interface ModelRouteUpsertInput {
+  model: string;
+  providerId: string;
+  providerModel: string;
+}
+
+export interface ProviderConfig {
+  providerId: string;
+  providerType: string;
+  baseUrl: string;
+  apiKey: string;
+}
+
+export interface ProviderConfigUpsertInput {
+  providerId: string;
+  providerType: string;
+  baseUrl: string;
+  apiKey: string;
 }
 
 export interface TenantProjectApiKeySeed {
@@ -148,39 +168,6 @@ export class AccessRepository {
         updatedAt: nowDate
       })
       .onConflictDoNothing();
-    await this.pgOrm
-      .insert(modelRoutes)
-      .values([
-        {
-          model: "sim-local",
-          providerId: "local-simulator",
-          providerModel: "sim-local",
-          isActive: true,
-          updatedAt: nowDate
-        },
-        {
-          model: "llama3.2",
-          providerId: "local-ollama",
-          providerModel: "gemma4:e2b",
-          isActive: true,
-          updatedAt: nowDate
-        },
-        {
-          model: "gpt-4o-mini",
-          providerId: "local-simulator",
-          providerModel: "sim-local",
-          isActive: true,
-          updatedAt: nowDate
-        },
-        {
-          model: "mock-default",
-          providerId: "local-mock",
-          providerModel: "sim-local",
-          isActive: true,
-          updatedAt: nowDate
-        }
-      ])
-      .onConflictDoNothing();
   }
 
   private isExpired(expiresAt: unknown): boolean {
@@ -260,18 +247,99 @@ export class AccessRepository {
     await this.ensureSeeded();
     const rows = await this.pgOrm
       .select({
-        model: modelRoutes.model,
-        provider_id: modelRoutes.providerId,
-        provider_model: modelRoutes.providerModel
+        model: modelProviderRoutes.model,
+        provider_id: modelProviderRoutes.providerId,
+        provider_model: modelProviderRoutes.providerModel
       })
-      .from(modelRoutes)
-      .where(eq(modelRoutes.isActive, true));
+      .from(modelProviderRoutes)
+      .where(eq(modelProviderRoutes.isActive, true));
 
     return rows.map((row) => ({
       model: row.model,
       providerId: row.provider_id,
       providerModel: row.provider_model
     }));
+  }
+
+  async upsertModelRoute(input: ModelRouteUpsertInput): Promise<ModelRoute> {
+    await this.ensureSeeded();
+    const now = new Date(toIsoDate());
+    await this.pgOrm
+      .insert(modelProviderRoutes)
+      .values({
+        model: input.model,
+        providerId: input.providerId,
+        providerModel: input.providerModel,
+        isActive: true,
+        updatedAt: now
+      })
+      .onConflictDoUpdate({
+        target: modelProviderRoutes.model,
+        set: {
+          providerId: input.providerId,
+          providerModel: input.providerModel,
+          isActive: true,
+          updatedAt: now
+        }
+      });
+
+    return {
+      model: input.model,
+      providerId: input.providerId,
+      providerModel: input.providerModel
+    };
+  }
+
+  async listActiveProviderConfigs(): Promise<ProviderConfig[]> {
+    await this.ensureSeeded();
+    const rows = await this.pgOrm
+      .select({
+        provider_id: upstreamProviders.providerId,
+        provider_type: upstreamProviders.providerType,
+        base_url: upstreamProviders.baseUrl,
+        api_key: upstreamProviders.apiKey
+      })
+      .from(upstreamProviders)
+      .where(eq(upstreamProviders.isActive, true));
+
+    return rows.map((row) => ({
+      providerId: row.provider_id,
+      providerType: row.provider_type,
+      baseUrl: row.base_url,
+      apiKey: row.api_key
+    }));
+  }
+
+  async upsertProviderConfig(input: ProviderConfigUpsertInput): Promise<ProviderConfig> {
+    await this.ensureSeeded();
+    const now = new Date(toIsoDate());
+    await this.pgOrm
+      .insert(upstreamProviders)
+      .values({
+        providerId: input.providerId,
+        providerType: input.providerType,
+        baseUrl: input.baseUrl,
+        apiKey: input.apiKey,
+        isActive: true,
+        updatedAt: now
+      })
+      .onConflictDoUpdate({
+        target: upstreamProviders.providerId,
+        set: {
+          providerType: input.providerType,
+          baseUrl: input.baseUrl,
+          apiKey: input.apiKey,
+          isActive: true,
+          updatedAt: now
+        }
+      });
+
+    return {
+      providerId: input.providerId,
+      providerType: input.providerType,
+      baseUrl: input.baseUrl,
+      apiKey: input.apiKey
+    };
   }
 
   async createTenantProjectApiKey(seed: TenantProjectApiKeySeed): Promise<SeedResult> {

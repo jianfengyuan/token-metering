@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "../src/app.js";
 import { createDatabase } from "../src/db/client.js";
 import { metrics } from "../src/observability/metrics.js";
+import { AccessRepository } from "../src/repositories/accessRepository.js";
 
 const ADMIN_TOKEN = "test-admin-token";
 
@@ -14,8 +15,32 @@ function ensurePostgresEnv(): void {
 }
 
 async function createTestApp() {
+  const database = await createDatabase();
+  const accessRepository = new AccessRepository(database);
+  await accessRepository.upsertProviderConfig({
+    providerId: "local-simulator",
+    providerType: "openai_compatible",
+    baseUrl: "http://127.0.0.1:3000/simulator/v1",
+    apiKey: "local-dev"
+  });
+  await accessRepository.upsertProviderConfig({
+    providerId: "local-mock",
+    providerType: "mock_local",
+    baseUrl: "mock://local",
+    apiKey: "mock-local"
+  });
+  await accessRepository.upsertModelRoute({
+    model: "sim-local",
+    providerId: "local-simulator",
+    providerModel: "sim-local"
+  });
+  await accessRepository.upsertModelRoute({
+    model: "mock-default",
+    providerId: "local-mock",
+    providerModel: "sim-local"
+  });
   return createApp({
-    database: await createDatabase(),
+    database,
     allowLegacyAuth: false,
     adminToken: ADMIN_TOKEN
   });
@@ -95,6 +120,102 @@ describe("Admin API", () => {
     const models = response.body.modelRoutes.map((route: { model: string }) => route.model);
     expect(models).toContain("mock-default");
     expect(models).toContain("sim-local");
+  });
+
+  it("allows admin to add model routes and use them immediately", async () => {
+    const app = await createTestApp();
+    const createRoute = await request(app)
+      .post("/admin/v1/model-routes")
+      .set("Authorization", `Bearer ${ADMIN_TOKEN}`)
+      .send({
+        model: "admin-added-model",
+        providerId: "local-mock",
+        providerModel: "sim-local"
+      });
+
+    expect(createRoute.status).toBe(201);
+    expect(createRoute.body.modelRoute.model).toBe("admin-added-model");
+
+    const routeList = await request(app)
+      .get("/admin/v1/model-routes")
+      .set("Authorization", `Bearer ${ADMIN_TOKEN}`);
+    const models = routeList.body.modelRoutes.map((route: { model: string }) => route.model);
+    expect(models).toContain("admin-added-model");
+
+    const chatResponse = await request(app)
+      .post("/chat")
+      .set("Authorization", "Bearer tm_default_dev_key")
+      .send({
+        model: "admin-added-model",
+        stream: false,
+        messages: [{ role: "user", content: "route from admin should work now" }]
+      });
+    expect(chatResponse.status).toBe(200);
+    expect(chatResponse.body.usage.totalTokens).toBeGreaterThan(0);
+  });
+
+  it("rejects model routes with unsupported providers", async () => {
+    const app = await createTestApp();
+    const response = await request(app)
+      .post("/admin/v1/model-routes")
+      .set("Authorization", `Bearer ${ADMIN_TOKEN}`)
+      .send({
+        model: "admin-unsupported-provider",
+        providerId: "provider-not-exist",
+        providerModel: "sim-local"
+      });
+
+    expect(response.status).toBe(400);
+    expect(response.body.code).toBe("UNSUPPORTED_PROVIDER");
+  });
+
+  it("allows admin to configure providers in database", async () => {
+    const app = await createTestApp();
+    const upsertResponse = await request(app)
+      .post("/admin/v1/providers")
+      .set("Authorization", `Bearer ${ADMIN_TOKEN}`)
+      .send({
+        providerId: "openai",
+        providerType: "openai_compatible",
+        baseUrl: "https://api.openai.com/v1",
+        apiKey: "sk-test-configured-by-admin"
+      });
+    expect(upsertResponse.status).toBe(201);
+    expect(upsertResponse.body.provider.providerId).toBe("openai");
+    expect(upsertResponse.body.provider.apiKeyMasked).toContain("...");
+
+    const listResponse = await request(app)
+      .get("/admin/v1/providers")
+      .set("Authorization", `Bearer ${ADMIN_TOKEN}`);
+    expect(listResponse.status).toBe(200);
+    expect(listResponse.body.providers.some((provider: { providerId: string }) => provider.providerId === "openai")).toBe(
+      true
+    );
+  });
+
+  it("accepts model routes for providers configured in database", async () => {
+    const app = await createTestApp();
+    await request(app)
+      .post("/admin/v1/providers")
+      .set("Authorization", `Bearer ${ADMIN_TOKEN}`)
+      .send({
+        providerId: "deepseek",
+        providerType: "openai_compatible",
+        baseUrl: "https://api.deepseek.com/v1",
+        apiKey: "deepseek-test-key"
+      });
+
+    const response = await request(app)
+      .post("/admin/v1/model-routes")
+      .set("Authorization", `Bearer ${ADMIN_TOKEN}`)
+      .send({
+        model: "deepseek-chat",
+        providerId: "deepseek",
+        providerModel: "deepseek-chat"
+      });
+
+    expect(response.status).toBe(201);
+    expect(response.body.modelRoute.providerId).toBe("deepseek");
   });
 
   it("lists recent audit events including admin actions", async () => {

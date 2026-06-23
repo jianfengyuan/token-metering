@@ -5,6 +5,7 @@ import type { AccessRepository } from "../repositories/accessRepository.js";
 import { DEFAULT_TENANT_ID } from "../repositories/accessRepository.js";
 import type { AuditRepository } from "../repositories/auditRepository.js";
 import type { UsageRepository } from "../repositories/usageRepository.js";
+import type { ProviderGateway } from "../providers/gateway.js";
 import { logger } from "../utils/logger.js";
 
 export const FALLBACK_ADMIN_TOKEN = "tm_admin_dev_token";
@@ -13,6 +14,7 @@ export interface AdminRouterDeps {
   accessRepository: AccessRepository;
   auditRepository: AuditRepository;
   usageRepository: UsageRepository;
+  providerGateway: ProviderGateway;
   adminToken: string;
 }
 
@@ -36,6 +38,26 @@ const usageQuerySchema = z.object({
   projectId: z.string().min(1).optional()
 });
 
+const createModelRouteSchema = z.object({
+  model: z.string().trim().min(1),
+  providerId: z.string().trim().min(1),
+  providerModel: z.string().trim().min(1)
+});
+
+const upsertProviderConfigSchema = z.object({
+  providerId: z.string().trim().min(1),
+  providerType: z.enum(["openai_compatible", "mock_local"]).default("openai_compatible"),
+  baseUrl: z.string().trim().url(),
+  apiKey: z.string().trim().min(1)
+});
+
+function maskSecret(raw: string): string {
+  if (raw.length <= 8) {
+    return "*".repeat(raw.length);
+  }
+  return `${raw.slice(0, 4)}...${raw.slice(-4)}`;
+}
+
 function parseAdminToken(req: Request): string | null {
   const headerToken = req.header("x-admin-token");
   if (headerToken && headerToken.trim().length > 0) {
@@ -54,6 +76,10 @@ function parseAdminToken(req: Request): string | null {
 
 export function createAdminRouter(deps: AdminRouterDeps): Router {
   const router = Router();
+  const reloadProviderGateway = async (): Promise<void> => {
+    deps.providerGateway.setExternalProviders(await deps.accessRepository.listActiveProviderConfigs());
+    deps.providerGateway.setModelRoutes(await deps.accessRepository.listActiveModelRoutes());
+  };
 
   const requireAdminToken = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     const token = parseAdminToken(req);
@@ -120,8 +146,114 @@ export function createAdminRouter(deps: AdminRouterDeps): Router {
     });
   });
 
+  router.post("/model-routes", async (req, res) => {
+    const requestId = res.locals.requestId as string | undefined;
+    const parsed = createModelRouteSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: "Invalid request body",
+        requestId,
+        details: parsed.error.flatten()
+      });
+      return;
+    }
+
+    const payload = {
+      model: parsed.data.model,
+      providerId: parsed.data.providerId,
+      providerModel: parsed.data.providerModel
+    };
+    if (!deps.providerGateway.hasProvider(payload.providerId)) {
+      res.status(400).json({
+        error: "Unsupported provider",
+        code: "UNSUPPORTED_PROVIDER",
+        requestId,
+        supportedProviders: deps.providerGateway.listProviderIds()
+      });
+      return;
+    }
+
+    const route = await deps.accessRepository.upsertModelRoute(payload);
+    deps.providerGateway.setModelRoutes(await deps.accessRepository.listActiveModelRoutes());
+
+    await deps.auditRepository.save({
+      eventType: "admin.model_route.upserted",
+      outcome: "success",
+      requestId,
+      provider: route.providerId,
+      model: route.model,
+      method: req.method,
+      path: req.originalUrl,
+      message: `Model route upserted: ${route.model} -> ${route.providerId}/${route.providerModel}`
+    });
+    logger.info("admin.model_route.upserted", {
+      requestId,
+      model: route.model,
+      provider: route.providerId,
+      providerModel: route.providerModel
+    });
+
+    res.status(201).json({
+      requestId,
+      modelRoute: route
+    });
+  });
+
   router.get("/model-routes", async (_req, res) => {
     res.json({ modelRoutes: await deps.accessRepository.listActiveModelRoutes() });
+  });
+
+  router.post("/providers", async (req, res) => {
+    const requestId = res.locals.requestId as string | undefined;
+    const parsed = upsertProviderConfigSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({
+        error: "Invalid request body",
+        requestId,
+        details: parsed.error.flatten()
+      });
+      return;
+    }
+
+    const config = await deps.accessRepository.upsertProviderConfig(parsed.data);
+    await reloadProviderGateway();
+    await deps.auditRepository.save({
+      eventType: "admin.provider.upserted",
+      outcome: "success",
+      requestId,
+      provider: config.providerId,
+      method: req.method,
+      path: req.originalUrl,
+      message: `Provider upserted: ${config.providerId} (${config.providerType})`
+    });
+    logger.info("admin.provider.upserted", {
+      requestId,
+      provider: config.providerId,
+      providerType: config.providerType,
+      baseUrl: config.baseUrl
+    });
+
+    res.status(201).json({
+      requestId,
+      provider: {
+        providerId: config.providerId,
+        providerType: config.providerType,
+        baseUrl: config.baseUrl,
+        apiKeyMasked: maskSecret(config.apiKey)
+      }
+    });
+  });
+
+  router.get("/providers", async (_req, res) => {
+    const providers = await deps.accessRepository.listActiveProviderConfigs();
+    res.json({
+      providers: providers.map((provider) => ({
+        providerId: provider.providerId,
+        providerType: provider.providerType,
+        baseUrl: provider.baseUrl,
+        apiKeyMasked: maskSecret(provider.apiKey)
+      }))
+    });
   });
 
   router.get("/audit-events", async (req, res) => {

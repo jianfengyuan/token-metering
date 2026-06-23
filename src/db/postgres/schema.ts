@@ -36,10 +36,19 @@ export const projectQuotas = pgTable("project_quotas", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull()
 });
 
-export const modelRoutes = pgTable("model_routes", {
+export const modelProviderRoutes = pgTable("model_provider_routes", {
   model: text("model").primaryKey(),
   providerId: text("provider_id").notNull(),
   providerModel: text("provider_model").notNull(),
+  isActive: boolean("is_active").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull()
+});
+
+export const upstreamProviders = pgTable("upstream_providers", {
+  providerId: text("provider_id").primaryKey(),
+  providerType: text("provider_type").notNull(),
+  baseUrl: text("base_url").notNull(),
+  apiKey: text("api_key").notNull(),
   isActive: boolean("is_active").notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull()
 });

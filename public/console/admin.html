@@ -68,6 +68,77 @@
         </div>
 
         <div class="panel">
+          <h2>添加上游 Provider</h2>
+          <p class="hint">配置 upstream provider，保存后立即生效；相同 Provider ID 会覆盖更新</p>
+          <form id="provider-form">
+            <div class="field-row">
+              <div class="field">
+                <label for="provider-id">Provider ID</label>
+                <input id="provider-id" type="text" placeholder="openai" required />
+              </div>
+              <div class="field">
+                <label for="provider-type">Provider 类型</label>
+                <select id="provider-type" required>
+                  <option value="openai_compatible">openai_compatible</option>
+                  <option value="mock_local">mock_local</option>
+                </select>
+              </div>
+            </div>
+            <div class="field">
+              <label for="provider-base-url">Base URL</label>
+              <input id="provider-base-url" type="url" placeholder="https://api.openai.com/v1" required />
+            </div>
+            <div class="field">
+              <label for="provider-api-key">API Key</label>
+              <input id="provider-api-key" type="password" placeholder="sk-..." autocomplete="off" required />
+            </div>
+            <button type="submit">保存 Provider</button>
+          </form>
+          <div id="provider-result" hidden></div>
+        </div>
+
+        <div class="panel">
+          <div class="section-head">
+            <h2>上游 Provider</h2>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Provider ID</th><th>类型</th><th>Base URL</th><th>API Key</th></tr>
+              </thead>
+              <tbody id="providers-body">
+                <tr><td colspan="4" class="empty-row">暂无数据</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h2>添加模型路由</h2>
+          <p class="hint">新增后立即生效，可直接用于 `/chat`</p>
+          <form id="route-form">
+            <div class="field-row">
+              <div class="field">
+                <label for="route-model">平台模型名</label>
+                <input id="route-model" type="text" placeholder="acme-chat-v1" required />
+              </div>
+              <div class="field">
+                <label for="route-provider-id">Upstream Provider</label>
+                <select id="route-provider-id" required disabled>
+                  <option value="">请先配置 Provider</option>
+                </select>
+              </div>
+            </div>
+            <div class="field">
+              <label for="route-provider-model">Provider 模型名</label>
+              <input id="route-provider-model" type="text" placeholder="sim-local" required />
+            </div>
+            <button type="submit">添加模型</button>
+          </form>
+          <div id="route-result" hidden></div>
+        </div>
+
+        <div class="panel">
           <div class="section-head">
             <h2>模型路由</h2>
           </div>

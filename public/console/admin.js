@@ -3,6 +3,11 @@
   const refreshBtn = document.getElementById("refresh-all");
   const createForm = document.getElementById("create-form");
   const createResult = document.getElementById("create-result");
+  const providerForm = document.getElementById("provider-form");
+  const providerResult = document.getElementById("provider-result");
+  const routeForm = document.getElementById("route-form");
+  const routeResult = document.getElementById("route-result");
+  const routeProviderSelect = document.getElementById("route-provider-id");
   const usageTenantInput = document.getElementById("usage-tenant");
 
   tokenInput.value = localStorage.getItem("tm.adminToken") || "";
@@ -52,6 +57,65 @@
     span.textContent = outcome;
     td.appendChild(span);
     return td;
+  }
+
+  function renderProviderSelect(providers, preferredId) {
+    const current = preferredId || routeProviderSelect.value;
+    routeProviderSelect.innerHTML = "";
+    routeProviderSelect.disabled = providers.length === 0;
+
+    if (providers.length === 0) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "请先配置 Provider";
+      routeProviderSelect.appendChild(option);
+      return;
+    }
+
+    const placeholder = document.createElement("option");
+    placeholder.value = "";
+    placeholder.textContent = "请选择 Provider";
+    placeholder.disabled = true;
+    placeholder.hidden = true;
+    routeProviderSelect.appendChild(placeholder);
+
+    for (const provider of providers) {
+      const option = document.createElement("option");
+      option.value = provider.providerId;
+      option.textContent = `${provider.providerId} (${provider.providerType})`;
+      routeProviderSelect.appendChild(option);
+    }
+
+    if (current && providers.some((provider) => provider.providerId === current)) {
+      routeProviderSelect.value = current;
+    } else {
+      routeProviderSelect.selectedIndex = 1;
+    }
+  }
+
+  async function loadProviders(preferredId) {
+    const tbody = document.getElementById("providers-body");
+    try {
+      const data = await adminFetch("/admin/v1/providers");
+      const providers = data.providers || [];
+      renderProviderSelect(providers, preferredId);
+      if (providers.length === 0) {
+        renderEmpty(tbody, 4, "暂无上游 Provider");
+        return;
+      }
+      tbody.innerHTML = "";
+      for (const provider of providers) {
+        const tr = document.createElement("tr");
+        tr.appendChild(cell(provider.providerId, true));
+        tr.appendChild(cell(provider.providerType));
+        tr.appendChild(cell(provider.baseUrl, true));
+        tr.appendChild(cell(provider.apiKeyMasked, true));
+        tbody.appendChild(tr);
+      }
+    } catch (error) {
+      renderEmpty(tbody, 4, `加载失败: ${error.message}`);
+      renderProviderSelect([]);
+    }
   }
 
   async function loadRoutes() {
@@ -139,7 +203,7 @@
   }
 
   async function refreshAll() {
-    await Promise.all([loadRoutes(), loadUsage(), loadAudit()]);
+    await Promise.all([loadProviders(), loadRoutes(), loadUsage(), loadAudit()]);
   }
 
   createForm.addEventListener("submit", async (event) => {
@@ -182,6 +246,74 @@
       createResult.className = "result-box error";
       createResult.textContent = `创建失败: ${error.message}`;
       createResult.hidden = false;
+    }
+  });
+
+  providerForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const body = {
+      providerId: document.getElementById("provider-id").value.trim(),
+      providerType: document.getElementById("provider-type").value,
+      baseUrl: document.getElementById("provider-base-url").value.trim(),
+      apiKey: document.getElementById("provider-api-key").value.trim()
+    };
+
+    providerResult.hidden = true;
+    try {
+      const res = await fetch("/admin/v1/providers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify(body)
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(payload.error || `HTTP ${res.status}`);
+      }
+
+      providerResult.className = "result-box success";
+      providerResult.textContent = `Provider 已保存: ${payload.provider.providerId} (${payload.provider.providerType})`;
+      providerResult.hidden = false;
+      document.getElementById("provider-api-key").value = "";
+      void loadProviders(payload.provider.providerId);
+    } catch (error) {
+      providerResult.className = "result-box error";
+      providerResult.textContent = `保存失败: ${error.message}`;
+      providerResult.hidden = false;
+    }
+  });
+
+  routeForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const body = {
+      model: document.getElementById("route-model").value.trim(),
+      providerId: document.getElementById("route-provider-id").value.trim(),
+      providerModel: document.getElementById("route-provider-model").value.trim()
+    };
+
+    routeResult.hidden = true;
+    try {
+      const res = await fetch("/admin/v1/model-routes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify(body)
+      });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const details = payload.supportedProviders?.length
+          ? `（可用: ${payload.supportedProviders.join(", ")}）`
+          : "";
+        throw new Error(`${payload.error || `HTTP ${res.status}`}${details}`);
+      }
+
+      routeResult.className = "result-box success";
+      routeResult.textContent = `模型已添加: ${payload.modelRoute.model} -> ${payload.modelRoute.providerId}/${payload.modelRoute.providerModel}`;
+      routeResult.hidden = false;
+      routeForm.reset();
+      void loadRoutes();
+    } catch (error) {
+      routeResult.className = "result-box error";
+      routeResult.textContent = `添加失败: ${error.message}`;
+      routeResult.hidden = false;
     }
   });
 

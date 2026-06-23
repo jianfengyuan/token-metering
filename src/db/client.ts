@@ -104,7 +104,8 @@ async function resetPostgresForTests(client: PostgresClient): Promise<void> {
       audit_events,
       project_quotas,
       api_keys,
-      model_routes,
+      upstream_providers,
+      model_provider_routes,
       projects,
       tenants
     RESTART IDENTITY CASCADE

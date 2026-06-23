@@ -12,10 +12,14 @@
 
 ```bash
 npm install
+cp platform.init.example.json platform.init.json
+npm run init:platform -- ./platform.init.json
 npm run dev
 ```
 
 默认启动端口：`3000`
+
+注意：服务启动前必须先完成平台初始化（Provider + Model Routes）。未初始化时，服务会拒绝启动并提示执行 `npm run init:platform`。
 
 数据库后端统一使用 PostgreSQL，启动前请设置：
 
@@ -97,11 +101,49 @@ export HF_TOKENIZER_REVISIONS='{"gemma":"main"}'
 
 配置 key 会按模型名匹配，所以请求里的 `model: "gemma-2-2b"` 会命中 `gemma`。未配置仓库映射时，缺失文件不会自动下载，会回退到 `js-tiktoken`。
 
-## Provider 说明
+## Provider 与模型初始化（DB 配置版）
 
-- `local-simulator`：调用本服务内置的 OpenAI 兼容模拟接口
-- `local-ollama`：调用本机 Ollama OpenAI 兼容接口（`OLLAMA_BASE_URL`）
-- `local-mock`：纯内存 mock provider（无网络依赖）
+所有 Provider 与模型路由都存储在数据库中，不在运行时代码里写死。
+
+可通过初始化脚本一次性导入：
+
+```bash
+npm run init:platform -- ./platform.init.json
+```
+
+`platform.init.json` 格式可参考 `platform.init.example.json`。
+
+也可以在服务启动后用管理 API 增量维护：
+
+先在数据库里配置 Provider（示例：OpenAI）：
+
+```bash
+curl -X POST http://127.0.0.1:3000/admin/v1/providers \
+  -H "Authorization: Bearer tm_admin_dev_token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "providerId":"openai",
+    "providerType":"openai_compatible",
+    "baseUrl":"https://api.openai.com/v1",
+    "apiKey":"sk-..."
+  }'
+```
+
+说明：
+- `providerType` 当前支持 `openai_compatible`、`mock_local`
+
+再配置模型路由（示例：把平台模型 `gpt-4o` 转发到该 Provider）：
+
+```bash
+curl -X POST http://127.0.0.1:3000/admin/v1/model-routes \
+  -H "Authorization: Bearer tm_admin_dev_token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model":"gpt-4o",
+    "providerId":"openai",
+    "providerModel":"gpt-4o"
+  }'
+```
 
 ## 环境变量
 

@@ -13,6 +13,44 @@ function ensurePostgresEnv(): void {
     "postgresql://admin:admin@127.0.0.1:5432/token_metering";
 }
 
+async function seedPlatformRouting(database: Awaited<ReturnType<typeof createDatabase>>): Promise<void> {
+  const accessRepository = new AccessRepository(database);
+  await accessRepository.upsertProviderConfig({
+    providerId: "local-simulator",
+    providerType: "openai_compatible",
+    baseUrl: "http://127.0.0.1:3000/simulator/v1",
+    apiKey: "local-dev"
+  });
+  await accessRepository.upsertProviderConfig({
+    providerId: "local-mock",
+    providerType: "mock_local",
+    baseUrl: "mock://local",
+    apiKey: "mock-local"
+  });
+  await accessRepository.upsertModelRoute({
+    model: "sim-local",
+    providerId: "local-simulator",
+    providerModel: "sim-local"
+  });
+  await accessRepository.upsertModelRoute({
+    model: "mock-default",
+    providerId: "local-mock",
+    providerModel: "sim-local"
+  });
+}
+
+async function createInitializedApp(options: {
+  database?: Awaited<ReturnType<typeof createDatabase>>;
+  allowLegacyAuth?: boolean;
+} = {}) {
+  const database = options.database ?? (await createDatabase());
+  await seedPlatformRouting(database);
+  return createApp({
+    database,
+    allowLegacyAuth: options.allowLegacyAuth
+  });
+}
+
 describe("App integration", () => {
   beforeEach(() => {
     process.env.DATABASE_CLIENT = "postgres";
@@ -22,8 +60,13 @@ describe("App integration", () => {
     metrics.resetForTests();
   });
 
+  it("requires platform initialization before app startup", async () => {
+    const db = await createDatabase();
+    await expect(createApp({ database: db })).rejects.toThrowError("Platform is not initialized");
+  });
+
   it("keeps legacy compatibility and records usage", async () => {
-    const app = await createApp();
+    const app = await createInitializedApp();
 
     const chatResponse = await request(app).post("/chat").send({
       userId: "u1",
@@ -45,7 +88,7 @@ describe("App integration", () => {
   });
 
   it("streams chat by default and still records usage", async () => {
-    const app = await createApp();
+    const app = await createInitializedApp();
 
     const chatResponse = await request(app).post("/chat").send({
       userId: "u-stream",
@@ -65,7 +108,7 @@ describe("App integration", () => {
   });
 
   it("rejects invalid api key when legacy mode disabled", async () => {
-    const app = await createApp({ allowLegacyAuth: false });
+    const app = await createInitializedApp({ allowLegacyAuth: false });
     const response = await request(app)
       .post("/chat")
       .set("Authorization", "Bearer invalid-key")
@@ -81,6 +124,7 @@ describe("App integration", () => {
 
   it("blocks request when project quota exceeded", async () => {
     const db = await createDatabase();
+    await seedPlatformRouting(db);
     const accessRepository = new AccessRepository(db);
     const tenant = await accessRepository.createTenantProjectApiKey({
       tenantId: "tenant-small",
@@ -89,7 +133,7 @@ describe("App integration", () => {
       tokenLimit: 10,
       costLimit: 10
     });
-    const app = await createApp({ database: db, allowLegacyAuth: false });
+    const app = await createInitializedApp({ database: db, allowLegacyAuth: false });
 
     const response = await request(app)
       .post("/chat")
@@ -106,6 +150,7 @@ describe("App integration", () => {
 
   it("isolates usage by tenant api key", async () => {
     const db = await createDatabase();
+    await seedPlatformRouting(db);
     const accessRepository = new AccessRepository(db);
     const tenantA = await accessRepository.createTenantProjectApiKey({
       tenantId: "tenant-a",
@@ -117,7 +162,7 @@ describe("App integration", () => {
       projectId: "project-b",
       apiKey: "tm_tenant_b"
     });
-    const app = await createApp({ database: db, allowLegacyAuth: false });
+    const app = await createInitializedApp({ database: db, allowLegacyAuth: false });
 
     await request(app)
       .post("/chat")
@@ -145,7 +190,7 @@ describe("App integration", () => {
   });
 
   it("chooses platform model route over client provider override", async () => {
-    const app = await createApp({ allowLegacyAuth: false });
+    const app = await createInitializedApp({ allowLegacyAuth: false });
     const response = await request(app)
       .post("/chat")
       .set("Authorization", `Bearer ${FALLBACK_API_KEY}`)
@@ -163,7 +208,7 @@ describe("App integration", () => {
   });
 
   it("serves local simulator openai compatible response", async () => {
-    const app = await createApp();
+    const app = await createInitializedApp();
     const response = await request(app).post("/simulator/v1/chat/completions").send({
       model: "sim-local",
       messages: [{ role: "user", content: "simulate openai response" }],
@@ -177,7 +222,7 @@ describe("App integration", () => {
   });
 
   it("serves simulator streaming chunks", async () => {
-    const app = await createApp();
+    const app = await createInitializedApp();
     const response = await request(app).post("/simulator/v1/chat/completions").send({
       model: "sim-local",
       messages: [{ role: "user", content: "stream me" }],
@@ -190,7 +235,7 @@ describe("App integration", () => {
   });
 
   it("exposes metrics endpoint with critical counters and latency histograms", async () => {
-    const app = await createApp({ allowLegacyAuth: false });
+    const app = await createInitializedApp({ allowLegacyAuth: false });
 
     await request(app)
       .post("/chat")
@@ -212,6 +257,7 @@ describe("App integration", () => {
 
   it("records audit events for auth failure, quota block and routing failure", async () => {
     const db = await createDatabase();
+    await seedPlatformRouting(db);
     const accessRepository = new AccessRepository(db);
     await accessRepository.createTenantProjectApiKey({
       tenantId: "tenant-audit",
@@ -220,7 +266,7 @@ describe("App integration", () => {
       tokenLimit: 1,
       costLimit: 1
     });
-    const app = await createApp({ database: db, allowLegacyAuth: false });
+    const app = await createInitializedApp({ database: db, allowLegacyAuth: false });
     const auditRepository = new AuditRepository(db);
 
     await request(app)

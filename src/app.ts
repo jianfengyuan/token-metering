@@ -31,17 +31,19 @@ export async function createApp(options: CreateAppOptions = {}) {
   const database = options.database ?? (await createDatabase());
   const accessRepository = new AccessRepository(database);
   const modelRoutes = await accessRepository.listActiveModelRoutes();
+  const providerConfigs = await accessRepository.listActiveProviderConfigs();
+  if (providerConfigs.length === 0 || modelRoutes.length === 0) {
+    throw new Error(
+      "Platform is not initialized: missing provider configs or model routes. Run `npm run init:platform -- ./platform.init.json` first."
+    );
+  }
   const meteringService = new MeteringService(Number(process.env.QUOTA_RESERVED_COMPLETION_TOKENS ?? "256"));
   const quotaRepository = new QuotaRepository(database);
   const usageRepository = new UsageRepository(database);
   const auditRepository = new AuditRepository(database);
-  const providerGateway = new ProviderGateway({
-    ollamaBaseUrl: process.env.OLLAMA_BASE_URL,
-    ollamaApiKey: process.env.OLLAMA_API_KEY,
-    simulatorBaseUrl,
-    simulatorApiKey: process.env.LOCAL_SIMULATOR_API_KEY,
-    modelRoutes
-  });
+  const providerGateway = new ProviderGateway();
+  providerGateway.setExternalProviders(providerConfigs);
+  providerGateway.setModelRoutes(modelRoutes);
   const allowLegacyAuth = options.allowLegacyAuth ?? process.env.ALLOW_LEGACY_AUTH !== "false";
   const adminToken = options.adminToken ?? process.env.ADMIN_TOKEN ?? FALLBACK_ADMIN_TOKEN;
 
@@ -96,6 +98,7 @@ export async function createApp(options: CreateAppOptions = {}) {
       accessRepository,
       auditRepository,
       usageRepository,
+      providerGateway,
       adminToken
     })
   );
@@ -103,7 +106,7 @@ export async function createApp(options: CreateAppOptions = {}) {
   logger.info("app.initialized", {
     port: Number(port),
     databaseDriver: database.dialect,
-    hasOllamaBaseUrl: Boolean(process.env.OLLAMA_BASE_URL),
+    activeExternalProviders: providerConfigs.length,
     simulatorBaseUrl,
     allowLegacyAuth
   });

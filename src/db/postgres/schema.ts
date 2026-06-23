@@ -15,6 +15,23 @@ export const projects = pgTable("projects", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull()
 });
 
+export const users = pgTable("users", {
+  id: text("id").primaryKey(),
+  email: text("email").notNull(),
+  name: text("name").notNull(),
+  passwordHash: text("password_hash"),
+  platformRole: text("platform_role"),
+  status: text("status").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull()
+});
+
+export const tenantMembers = pgTable("tenant_members", {
+  tenantId: text("tenant_id").notNull(),
+  userId: text("user_id").notNull(),
+  role: text("role").notNull(),
+  joinedAt: timestamp("joined_at", { withTimezone: true }).notNull()
+});
+
 export const apiKeys = pgTable("api_keys", {
   id: text("id").primaryKey(),
   projectId: text("project_id").notNull(),
@@ -22,8 +39,11 @@ export const apiKeys = pgTable("api_keys", {
   keyPrefix: text("key_prefix").notNull(),
   status: text("status").notNull(),
   scope: text("scope").notNull(),
+  createdBy: text("created_by"),
   expiresAt: timestamp("expires_at", { withTimezone: true }),
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  lastUsedIp: text("last_used_ip"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull()
 });
 

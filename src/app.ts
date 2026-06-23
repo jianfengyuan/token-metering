@@ -12,6 +12,7 @@ import { AccessRepository } from "./repositories/accessRepository.js";
 import { AuditRepository } from "./repositories/auditRepository.js";
 import { QuotaRepository } from "./repositories/quotaRepository.js";
 import { UsageRepository } from "./repositories/usageRepository.js";
+import { UserRepository } from "./repositories/userRepository.js";
 import { FALLBACK_ADMIN_TOKEN, createAdminRouter } from "./routes/admin.js";
 import { createChatRouter } from "./routes/chat.js";
 import { createSimulatorRouter } from "./routes/simulator.js";
@@ -41,6 +42,7 @@ export async function createApp(options: CreateAppOptions = {}) {
   const quotaRepository = new QuotaRepository(database);
   const usageRepository = new UsageRepository(database);
   const auditRepository = new AuditRepository(database);
+  const userRepository = new UserRepository(database);
   const providerGateway = new ProviderGateway();
   providerGateway.setExternalProviders(providerConfigs);
   providerGateway.setModelRoutes(modelRoutes);
@@ -96,6 +98,7 @@ export async function createApp(options: CreateAppOptions = {}) {
     "/admin/v1",
     createAdminRouter({
       accessRepository,
+      userRepository,
       auditRepository,
       usageRepository,
       providerGateway,

@@ -104,6 +104,8 @@ async function resetPostgresForTests(client: PostgresClient): Promise<void> {
       audit_events,
       project_quotas,
       api_keys,
+      tenant_members,
+      users,
       upstream_providers,
       model_provider_routes,
       projects,

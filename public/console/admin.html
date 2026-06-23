@@ -16,60 +16,144 @@
   </header>
 
   <div class="layout single">
+    <div class="panel" style="margin-bottom: 0;">
+      <h2>管理凭证</h2>
+      <p class="hint">Admin Token 仅保存在浏览器本地（P3 将迁移为 Cookie Session）</p>
+      <div class="field-row">
+        <div class="field">
+          <label for="admin-token">Admin Token</label>
+          <input id="admin-token" type="password" placeholder="ADMIN_TOKEN" autocomplete="off" />
+        </div>
+        <div class="field" style="display: flex; align-items: flex-end;">
+          <button id="refresh-all" class="secondary" type="button">刷新当前 Tab</button>
+        </div>
+      </div>
+    </div>
+
+    <nav class="tab-bar" id="admin-tabs">
+      <button type="button" data-tab="tenants" class="active">租户与密钥</button>
+      <button type="button" data-tab="platform">平台配置</button>
+      <button type="button" data-tab="users">用户与成员</button>
+      <button type="button" data-tab="monitoring">监控审计</button>
+    </nav>
+
+  <div id="tab-tenants" class="tab-panel active">
     <div class="admin-grid">
       <div>
         <div class="panel">
-          <h2>管理凭证</h2>
-          <p class="hint">Admin Token 仅保存在浏览器本地</p>
-          <div class="field">
-            <label for="admin-token">Admin Token</label>
-            <input id="admin-token" type="password" placeholder="ADMIN_TOKEN" autocomplete="off" />
-          </div>
-          <button id="refresh-all" class="secondary" type="button">刷新数据</button>
+          <h2>一键开通（租户 + 项目 + Key）</h2>
+          <p class="hint">生成的 API Key 仅展示一次</p>
+          <form id="provision-form">
+            <div class="field-row">
+              <div class="field">
+                <label for="provision-tenant-id">Tenant ID</label>
+                <input id="provision-tenant-id" type="text" placeholder="tenant-acme" required />
+              </div>
+              <div class="field">
+                <label for="provision-project-id">Project ID</label>
+                <input id="provision-project-id" type="text" placeholder="project-app" required />
+              </div>
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label for="provision-tenant-name">Tenant 名称（可选）</label>
+                <input id="provision-tenant-name" type="text" placeholder="Acme Inc" />
+              </div>
+              <div class="field">
+                <label for="provision-project-name">Project 名称（可选）</label>
+                <input id="provision-project-name" type="text" placeholder="Main App" />
+              </div>
+            </div>
+            <button type="submit">开通</button>
+          </form>
+          <div id="provision-result" hidden></div>
         </div>
 
         <div class="panel">
-          <h2>创建租户 / 项目 / API Key</h2>
-          <p class="hint">生成的 API Key 仅展示一次，请妥善保存</p>
-          <form id="create-form">
-            <div class="field-row">
-              <div class="field">
-                <label for="tenant-id">Tenant ID</label>
-                <input id="tenant-id" type="text" placeholder="tenant-acme" required />
-              </div>
-              <div class="field">
-                <label for="project-id">Project ID</label>
-                <input id="project-id" type="text" placeholder="project-app" required />
-              </div>
+          <h2>添加项目（自动生成初始 Key）</h2>
+          <form id="add-project-form">
+            <div class="field">
+              <label for="add-project-tenant-id">租户</label>
+              <select id="add-project-tenant-id" required disabled>
+                <option value="">加载中…</option>
+              </select>
             </div>
             <div class="field-row">
               <div class="field">
-                <label for="tenant-name">Tenant 名称（可选）</label>
-                <input id="tenant-name" type="text" placeholder="Acme Inc" />
+                <label for="add-project-id">Project ID</label>
+                <input id="add-project-id" type="text" placeholder="project-new" required />
               </div>
               <div class="field">
-                <label for="project-name">Project 名称（可选）</label>
-                <input id="project-name" type="text" placeholder="Main App" />
+                <label for="add-project-name">Project 名称（可选）</label>
+                <input id="add-project-name" type="text" placeholder="New App" />
               </div>
             </div>
-            <div class="field-row">
-              <div class="field">
-                <label for="token-limit">Token 配额（可选）</label>
-                <input id="token-limit" type="number" min="1" placeholder="1000000" />
-              </div>
-              <div class="field">
-                <label for="cost-limit">成本配额（可选）</label>
-                <input id="cost-limit" type="number" min="0.01" step="0.01" placeholder="1000" />
-              </div>
-            </div>
-            <button type="submit">创建</button>
+            <button type="submit">添加项目</button>
           </form>
-          <div id="create-result" hidden></div>
+          <div id="add-project-result" hidden></div>
         </div>
 
+        <div class="panel">
+          <h2>为项目添加 API Key</h2>
+          <form id="add-key-form">
+            <div class="field">
+              <label for="add-key-project-id">项目</label>
+              <select id="add-key-project-id" required disabled>
+                <option value="">加载中…</option>
+              </select>
+            </div>
+            <button type="submit">生成 Key</button>
+          </form>
+          <div id="add-key-result" hidden></div>
+        </div>
+      </div>
+
+      <div>
+        <div class="panel">
+          <div class="section-head">
+            <h2>租户列表</h2>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>ID</th><th>名称</th><th>状态</th><th>创建时间</th></tr>
+              </thead>
+              <tbody id="tenants-body">
+                <tr><td colspan="4" class="empty-row">暂无数据</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="section-head">
+            <h2>API Keys</h2>
+            <div class="field" style="margin: 0; width: 280px;">
+              <select id="keys-project-id" disabled>
+                <option value="">加载中…</option>
+              </select>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>前缀</th><th>状态</th><th>Scope</th><th>最后使用</th><th>操作</th></tr>
+              </thead>
+              <tbody id="keys-body">
+                <tr><td colspan="5" class="empty-row">请选择项目</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="tab-platform" class="tab-panel">
+    <div class="admin-grid">
+      <div>
         <div class="panel">
           <h2>添加上游 Provider</h2>
-          <p class="hint">配置 upstream provider，保存后立即生效；相同 Provider ID 会覆盖更新</p>
           <form id="provider-form">
             <div class="field-row">
               <div class="field">
@@ -98,24 +182,7 @@
         </div>
 
         <div class="panel">
-          <div class="section-head">
-            <h2>上游 Provider</h2>
-          </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr><th>Provider ID</th><th>类型</th><th>Base URL</th><th>API Key</th></tr>
-              </thead>
-              <tbody id="providers-body">
-                <tr><td colspan="4" class="empty-row">暂无数据</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div class="panel">
           <h2>添加模型路由</h2>
-          <p class="hint">新增后立即生效，可直接用于 `/chat`</p>
           <form id="route-form">
             <div class="field-row">
               <div class="field">
@@ -137,11 +204,25 @@
           </form>
           <div id="route-result" hidden></div>
         </div>
+      </div>
+
+      <div>
+        <div class="panel">
+          <h2>上游 Provider</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Provider ID</th><th>类型</th><th>Base URL</th><th>API Key</th></tr>
+              </thead>
+              <tbody id="providers-body">
+                <tr><td colspan="4" class="empty-row">暂无数据</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
 
         <div class="panel">
-          <div class="section-head">
-            <h2>模型路由</h2>
-          </div>
+          <h2>模型路由</h2>
           <div class="table-wrap">
             <table>
               <thead>
@@ -154,28 +235,76 @@
           </div>
         </div>
       </div>
+    </div>
+  </div>
+
+  <div id="tab-users" class="tab-panel">
+    <div class="admin-grid">
+      <div>
+        <div class="panel">
+          <h2>创建用户</h2>
+          <form id="user-form">
+            <div class="field-row">
+              <div class="field">
+                <label for="user-email">Email</label>
+                <input id="user-email" type="email" placeholder="admin@example.com" required />
+              </div>
+              <div class="field">
+                <label for="user-name">名称</label>
+                <input id="user-name" type="text" placeholder="Admin User" required />
+              </div>
+            </div>
+            <div class="field">
+              <label for="user-platform-role">平台角色（可选）</label>
+              <select id="user-platform-role">
+                <option value="">无</option>
+                <option value="platform_admin">platform_admin</option>
+              </select>
+            </div>
+            <button type="submit">创建用户</button>
+          </form>
+          <div id="user-result" hidden></div>
+        </div>
+
+        <div class="panel">
+          <h2>添加租户成员</h2>
+          <form id="member-form">
+            <div class="field">
+              <label for="member-tenant-id">租户</label>
+              <select id="member-tenant-id" required disabled>
+                <option value="">加载中…</option>
+              </select>
+            </div>
+            <div class="field-row">
+              <div class="field">
+                <label for="member-user-id">User ID</label>
+                <input id="member-user-id" type="text" placeholder="user-xxx" required />
+              </div>
+              <div class="field">
+                <label for="member-role">角色</label>
+                <select id="member-role">
+                  <option value="member">member</option>
+                  <option value="admin">admin</option>
+                  <option value="owner">owner</option>
+                </select>
+              </div>
+            </div>
+            <button type="submit">添加成员</button>
+          </form>
+          <div id="member-result" hidden></div>
+        </div>
+      </div>
 
       <div>
         <div class="panel">
-          <div class="section-head">
-            <h2>用量概览</h2>
-            <div class="field" style="margin: 0; width: 200px;">
-              <input id="usage-tenant" type="text" placeholder="tenant-default" />
-            </div>
-          </div>
-          <div class="stat-grid">
-            <div class="stat"><div class="stat-label">请求数</div><div class="stat-value" id="stat-count">-</div></div>
-            <div class="stat"><div class="stat-label">Prompt Tokens</div><div class="stat-value" id="stat-prompt">-</div></div>
-            <div class="stat"><div class="stat-label">Completion Tokens</div><div class="stat-value" id="stat-completion">-</div></div>
-            <div class="stat"><div class="stat-label">总成本</div><div class="stat-value" id="stat-cost">-</div></div>
-          </div>
+          <h2>用户列表</h2>
           <div class="table-wrap">
             <table>
               <thead>
-                <tr><th>时间</th><th>项目</th><th>模型</th><th>Provider</th><th>Tokens</th><th>成本</th><th>状态</th></tr>
+                <tr><th>ID</th><th>Email</th><th>名称</th><th>平台角色</th><th>状态</th></tr>
               </thead>
-              <tbody id="usage-body">
-                <tr><td colspan="7" class="empty-row">暂无数据</td></tr>
+              <tbody id="users-body">
+                <tr><td colspan="5" class="empty-row">暂无数据</td></tr>
               </tbody>
             </table>
           </div>
@@ -183,15 +312,20 @@
 
         <div class="panel">
           <div class="section-head">
-            <h2>最近审计事件</h2>
+            <h2>租户成员</h2>
+            <div class="field" style="margin: 0; width: 280px;">
+              <select id="members-tenant-id" disabled>
+                <option value="">加载中…</option>
+              </select>
+            </div>
           </div>
           <div class="table-wrap">
             <table>
               <thead>
-                <tr><th>时间</th><th>事件</th><th>结果</th><th>租户</th><th>模型</th><th>错误码</th></tr>
+                <tr><th>User ID</th><th>Email</th><th>名称</th><th>角色</th><th>加入时间</th></tr>
               </thead>
-              <tbody id="audit-body">
-                <tr><td colspan="6" class="empty-row">暂无数据</td></tr>
+              <tbody id="members-body">
+                <tr><td colspan="5" class="empty-row">请选择租户</td></tr>
               </tbody>
             </table>
           </div>
@@ -200,6 +334,48 @@
     </div>
   </div>
 
-  <script src="./admin.js"></script>
+  <div id="tab-monitoring" class="tab-panel">
+    <div class="panel">
+      <div class="section-head">
+        <h2>用量概览</h2>
+        <div class="field" style="margin: 0; width: 200px;">
+          <input id="usage-tenant" type="text" placeholder="tenant-default" />
+        </div>
+      </div>
+      <div class="stat-grid">
+        <div class="stat"><div class="stat-label">请求数</div><div class="stat-value" id="stat-count">-</div></div>
+        <div class="stat"><div class="stat-label">Prompt Tokens</div><div class="stat-value" id="stat-prompt">-</div></div>
+        <div class="stat"><div class="stat-label">Completion Tokens</div><div class="stat-value" id="stat-completion">-</div></div>
+        <div class="stat"><div class="stat-label">总成本</div><div class="stat-value" id="stat-cost">-</div></div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>时间</th><th>项目</th><th>模型</th><th>Provider</th><th>Tokens</th><th>成本</th><th>状态</th></tr>
+          </thead>
+          <tbody id="usage-body">
+            <tr><td colspan="7" class="empty-row">暂无数据</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>最近审计事件</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>时间</th><th>事件</th><th>结果</th><th>租户</th><th>模型</th><th>错误码</th></tr>
+          </thead>
+          <tbody id="audit-body">
+            <tr><td colspan="6" class="empty-row">暂无数据</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  </div>
+
+  <script type="module" src="./admin/main.js"></script>
 </body>
 </html>

@@ -71,10 +71,10 @@ describe("Admin API", () => {
     expect(response.body.code).toBe("INVALID_ADMIN_TOKEN");
   });
 
-  it("creates tenant, project and api key usable for chat", async () => {
+  it("provisions tenant, project and api key usable for chat", async () => {
     const app = await createTestApp();
     const createResponse = await request(app)
-      .post("/admin/v1/tenants")
+      .post("/admin/v1/tenants/provision")
       .set("Authorization", `Bearer ${ADMIN_TOKEN}`)
       .send({
         tenantId: "tenant-admin-test",
@@ -100,10 +100,135 @@ describe("Admin API", () => {
     expect(chatResponse.body.usage.totalTokens).toBeGreaterThan(0);
   });
 
+  it("returns 409 when provisioning duplicate project", async () => {
+    const app = await createTestApp();
+    await request(app)
+      .post("/admin/v1/tenants/provision")
+      .set("Authorization", `Bearer ${ADMIN_TOKEN}`)
+      .send({ tenantId: "tenant-dup", projectId: "project-dup" });
+
+    const response = await request(app)
+      .post("/admin/v1/tenants/provision")
+      .set("Authorization", `Bearer ${ADMIN_TOKEN}`)
+      .send({ tenantId: "tenant-dup-2", projectId: "project-dup" });
+
+    expect(response.status).toBe(409);
+    expect(response.body.code).toBe("CONFLICT");
+  });
+
+  it("creates project with initial api key under existing tenant", async () => {
+    const app = await createTestApp();
+    await request(app)
+      .post("/admin/v1/tenants")
+      .set("Authorization", `Bearer ${ADMIN_TOKEN}`)
+      .send({ tenantId: "tenant-project-only", tenantName: "Project Only Tenant" });
+
+    const response = await request(app)
+      .post("/admin/v1/tenants/tenant-project-only/projects")
+      .set("Authorization", `Bearer ${ADMIN_TOKEN}`)
+      .send({ projectId: "project-child", projectName: "Child Project" });
+
+    expect(response.status).toBe(201);
+    expect(response.body.apiKey).toMatch(/^tm_/);
+    expect(response.body.projectId).toBe("project-child");
+  });
+
+  it("lists, revokes and rotates api keys", async () => {
+    const app = await createTestApp();
+    const provision = await request(app)
+      .post("/admin/v1/tenants/provision")
+      .set("Authorization", `Bearer ${ADMIN_TOKEN}`)
+      .send({ tenantId: "tenant-keys", projectId: "project-keys" });
+
+    const apiKey = provision.body.apiKey;
+    const apiKeyId = provision.body.apiKeyId;
+
+    const listResponse = await request(app)
+      .get("/admin/v1/projects/project-keys/api-keys")
+      .set("Authorization", `Bearer ${ADMIN_TOKEN}`);
+    expect(listResponse.status).toBe(200);
+    expect(listResponse.body.apiKeys).toHaveLength(1);
+    expect(listResponse.body.apiKeys[0].keyPrefix).toBe(apiKey.slice(0, 8));
+
+    await request(app)
+      .post("/chat")
+      .set("Authorization", `Bearer ${apiKey}`)
+      .send({
+        model: "mock-default",
+        stream: false,
+        messages: [{ role: "user", content: "touch last_used" }]
+      });
+
+    const listAfterUse = await request(app)
+      .get("/admin/v1/projects/project-keys/api-keys")
+      .set("Authorization", `Bearer ${ADMIN_TOKEN}`);
+    expect(listAfterUse.body.apiKeys[0].lastUsedAt).toBeTruthy();
+
+    const revokeResponse = await request(app)
+      .post(`/admin/v1/api-keys/${apiKeyId}/revoke`)
+      .set("Authorization", `Bearer ${ADMIN_TOKEN}`);
+    expect(revokeResponse.status).toBe(200);
+    expect(revokeResponse.body.apiKey.status).toBe("revoked");
+
+    const chatAfterRevoke = await request(app)
+      .post("/chat")
+      .set("Authorization", `Bearer ${apiKey}`)
+      .send({
+        model: "mock-default",
+        stream: false,
+        messages: [{ role: "user", content: "should fail" }]
+      });
+    expect(chatAfterRevoke.status).toBe(401);
+
+    const rotateResponse = await request(app)
+      .post(`/admin/v1/api-keys/${apiKeyId}/rotate`)
+      .set("Authorization", `Bearer ${ADMIN_TOKEN}`);
+    expect(rotateResponse.status).toBe(201);
+    expect(rotateResponse.body.apiKey).toMatch(/^tm_/);
+
+    const chatWithNewKey = await request(app)
+      .post("/chat")
+      .set("Authorization", `Bearer ${rotateResponse.body.apiKey}`)
+      .send({
+        model: "mock-default",
+        stream: false,
+        messages: [{ role: "user", content: "rotated key works" }]
+      });
+    expect(chatWithNewKey.status).toBe(200);
+  });
+
+  it("manages users and tenant members", async () => {
+    const app = await createTestApp();
+    await request(app)
+      .post("/admin/v1/tenants/provision")
+      .set("Authorization", `Bearer ${ADMIN_TOKEN}`)
+      .send({ tenantId: "tenant-members", projectId: "project-members" });
+
+    const userResponse = await request(app)
+      .post("/admin/v1/users")
+      .set("Authorization", `Bearer ${ADMIN_TOKEN}`)
+      .send({ email: "member@example.com", name: "Member User", platformRole: "platform_admin" });
+    expect(userResponse.status).toBe(201);
+    const userId = userResponse.body.user.id;
+
+    const memberResponse = await request(app)
+      .post("/admin/v1/tenants/tenant-members/members")
+      .set("Authorization", `Bearer ${ADMIN_TOKEN}`)
+      .send({ userId, role: "admin" });
+    expect(memberResponse.status).toBe(201);
+    expect(memberResponse.body.member.role).toBe("admin");
+
+    const listMembers = await request(app)
+      .get("/admin/v1/tenants/tenant-members/members")
+      .set("Authorization", `Bearer ${ADMIN_TOKEN}`);
+    expect(listMembers.body.members).toHaveLength(1);
+    expect(listMembers.body.members[0].email).toBe("member@example.com");
+  });
+
   it("validates tenant creation payload", async () => {
     const app = await createTestApp();
     const response = await request(app)
-      .post("/admin/v1/tenants")
+      .post("/admin/v1/tenants/provision")
       .set("Authorization", `Bearer ${ADMIN_TOKEN}`)
       .send({ tenantId: "tenant-only" });
 
@@ -221,7 +346,7 @@ describe("Admin API", () => {
   it("lists recent audit events including admin actions", async () => {
     const app = await createTestApp();
     await request(app)
-      .post("/admin/v1/tenants")
+      .post("/admin/v1/tenants/provision")
       .set("Authorization", `Bearer ${ADMIN_TOKEN}`)
       .send({ tenantId: "tenant-audit-admin", projectId: "project-audit-admin" });
     await request(app).get("/admin/v1/usage").set("Authorization", "Bearer wrong-token");
@@ -232,14 +357,14 @@ describe("Admin API", () => {
 
     expect(response.status).toBe(200);
     const eventTypes = response.body.events.map((event: { eventType: string }) => event.eventType);
-    expect(eventTypes).toContain("admin.tenant.created");
+    expect(eventTypes).toContain("admin.tenant.provisioned");
     expect(eventTypes).toContain("admin.auth.failed");
   });
 
   it("returns usage summary and records for a tenant", async () => {
     const app = await createTestApp();
     const createResponse = await request(app)
-      .post("/admin/v1/tenants")
+      .post("/admin/v1/tenants/provision")
       .set("Authorization", `Bearer ${ADMIN_TOKEN}`)
       .send({ tenantId: "tenant-usage-admin", projectId: "project-usage-admin" });
 

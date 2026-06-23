@@ -426,6 +426,62 @@ tbody tr:last-child td {
   padding: 18px 0;
 }
 
+.tab-bar {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px;
+}
+
+.tab-bar button {
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-weight: 600;
+}
+
+.tab-bar button:hover {
+  background: var(--bg);
+  color: var(--text);
+}
+
+.tab-bar button.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.tab-panel {
+  display: none;
+}
+
+.tab-panel.active {
+  display: block;
+}
+
+.btn-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.btn-row button.danger {
+  background: var(--danger);
+}
+
+.btn-row button.danger:hover {
+  background: #a83226;
+}
+
+.btn-row button.small {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
 @media (max-width: 960px) {
   .layout {
     flex-direction: column;

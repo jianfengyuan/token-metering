@@ -1,9 +1,27 @@
 import { createHash, randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
 import type { Pool } from "pg";
 import { apiKeys, modelProviderRoutes, projectQuotas, projects, tenants, upstreamProviders } from "../db/postgres/schema.js";
 import type { DatabaseClient } from "../db/types.js";
+
+export class ConflictError extends Error {
+  readonly code = "CONFLICT";
+
+  constructor(message: string) {
+    super(message);
+    this.name = "ConflictError";
+  }
+}
+
+export class NotFoundError extends Error {
+  readonly code = "NOT_FOUND";
+
+  constructor(message: string) {
+    super(message);
+    this.name = "NotFoundError";
+  }
+}
 
 export interface AccessRepositoryOptions {
   defaultApiKey?: string;
@@ -62,6 +80,42 @@ export interface TenantProjectApiKeySeed {
   scope?: string;
   tokenLimit?: number;
   costLimit?: number;
+  createdBy?: string;
+}
+
+export interface CreateTenantInput {
+  tenantId: string;
+  tenantName?: string;
+}
+
+export interface CreateProjectInput {
+  tenantId: string;
+  projectId: string;
+  projectName?: string;
+  tokenLimit?: number;
+  costLimit?: number;
+  scope?: string;
+  createdBy?: string;
+}
+
+export interface CreateApiKeyInput {
+  projectId: string;
+  scope?: string;
+  createdBy?: string;
+}
+
+export interface ApiKeyListItem {
+  id: string;
+  projectId: string;
+  keyPrefix: string;
+  status: string;
+  scope: string;
+  createdBy: string | null;
+  expiresAt: string | null;
+  revokedAt: string | null;
+  lastUsedAt: string | null;
+  lastUsedIp: string | null;
+  createdAt: string;
 }
 
 export interface SeedResult {
@@ -69,6 +123,21 @@ export interface SeedResult {
   projectId: string;
   apiKeyId: string;
   apiKey: string;
+}
+
+export interface TenantRecord {
+  id: string;
+  name: string;
+  status: string;
+  createdAt: string;
+}
+
+export interface ProjectRecord {
+  id: string;
+  tenantId: string;
+  name: string;
+  status: string;
+  createdAt: string;
 }
 
 export const DEFAULT_TENANT_ID = "tenant-default";
@@ -87,8 +156,18 @@ function parseScopes(rawScope: string): string[] {
     .filter((scope) => scope.length > 0);
 }
 
-function toIsoDate(): string {
-  return new Date().toISOString();
+function toIsoDate(value?: Date | string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  return value;
+}
+
+function generateApiKeyRaw(): string {
+  return `tm_${randomUUID().replace(/-/g, "")}`;
 }
 
 export function hashApiKey(rawApiKey: string): string {
@@ -123,16 +202,15 @@ export class AccessRepository {
   }
 
   private async seedDefaults(): Promise<void> {
-    const now = toIsoDate();
+    const now = new Date();
     const defaultScope = "chat.write,usage.read";
-    const nowDate = new Date(now);
     await this.pgOrm
       .insert(tenants)
       .values({
         id: DEFAULT_TENANT_ID,
         name: "Default Tenant",
         status: "active",
-        createdAt: nowDate
+        createdAt: now
       })
       .onConflictDoNothing();
     await this.pgOrm
@@ -142,7 +220,7 @@ export class AccessRepository {
         tenantId: DEFAULT_TENANT_ID,
         name: "Default Project",
         status: "active",
-        createdAt: nowDate
+        createdAt: now
       })
       .onConflictDoNothing();
     await this.pgOrm
@@ -154,7 +232,7 @@ export class AccessRepository {
         keyPrefix: this.defaultApiKey.slice(0, 8),
         status: "active",
         scope: defaultScope,
-        createdAt: nowDate
+        createdAt: now
       })
       .onConflictDoNothing();
     await this.pgOrm
@@ -165,9 +243,94 @@ export class AccessRepository {
         tokenUsed: 0,
         costLimit: String(this.defaultCostLimit),
         costUsed: "0",
-        updatedAt: nowDate
+        updatedAt: now
       })
       .onConflictDoNothing();
+  }
+
+  private async tenantExists(tenantId: string): Promise<boolean> {
+    const rows = await this.pgOrm.select({ id: tenants.id }).from(tenants).where(eq(tenants.id, tenantId)).limit(1);
+    return rows.length > 0;
+  }
+
+  private async projectExists(projectId: string): Promise<boolean> {
+    const rows = await this.pgOrm.select({ id: projects.id }).from(projects).where(eq(projects.id, projectId)).limit(1);
+    return rows.length > 0;
+  }
+
+  private async getProject(projectId: string): Promise<ProjectRecord | null> {
+    const rows = await this.pgOrm
+      .select({
+        id: projects.id,
+        tenant_id: projects.tenantId,
+        name: projects.name,
+        status: projects.status,
+        created_at: projects.createdAt
+      })
+      .from(projects)
+      .where(eq(projects.id, projectId))
+      .limit(1);
+    const row = rows[0];
+    if (!row) {
+      return null;
+    }
+    return {
+      id: row.id,
+      tenantId: row.tenant_id,
+      name: row.name,
+      status: row.status,
+      createdAt: toIsoDate(row.created_at) ?? ""
+    };
+  }
+
+  private mapApiKeyListItem(row: {
+    id: string;
+    project_id: string;
+    key_prefix: string;
+    status: string;
+    scope: string;
+    created_by: string | null;
+    expires_at: Date | string | null;
+    revoked_at: Date | string | null;
+    last_used_at: Date | string | null;
+    last_used_ip: string | null;
+    created_at: Date | string;
+  }): ApiKeyListItem {
+    return {
+      id: row.id,
+      projectId: row.project_id,
+      keyPrefix: row.key_prefix,
+      status: row.status,
+      scope: row.scope,
+      createdBy: row.created_by,
+      expiresAt: toIsoDate(row.expires_at),
+      revokedAt: toIsoDate(row.revoked_at),
+      lastUsedAt: toIsoDate(row.last_used_at),
+      lastUsedIp: row.last_used_ip,
+      createdAt: toIsoDate(row.created_at) ?? ""
+    };
+  }
+
+  private async insertApiKeyRecord(
+    projectId: string,
+    scope: string,
+    createdBy?: string,
+    rawApiKey?: string
+  ): Promise<{ apiKeyId: string; apiKey: string }> {
+    const apiKey = rawApiKey ?? generateApiKeyRaw();
+    const apiKeyId = `api-key-${randomUUID()}`;
+    const now = new Date();
+    await this.pgOrm.insert(apiKeys).values({
+      id: apiKeyId,
+      projectId,
+      keyHash: hashApiKey(apiKey),
+      keyPrefix: apiKey.slice(0, 8),
+      status: "active",
+      scope,
+      createdBy: createdBy ?? null,
+      createdAt: now
+    });
+    return { apiKeyId, apiKey };
   }
 
   private isExpired(expiresAt: unknown): boolean {
@@ -263,7 +426,7 @@ export class AccessRepository {
 
   async upsertModelRoute(input: ModelRouteUpsertInput): Promise<ModelRoute> {
     await this.ensureSeeded();
-    const now = new Date(toIsoDate());
+    const now = new Date();
     await this.pgOrm
       .insert(modelProviderRoutes)
       .values({
@@ -312,7 +475,7 @@ export class AccessRepository {
 
   async upsertProviderConfig(input: ProviderConfigUpsertInput): Promise<ProviderConfig> {
     await this.ensureSeeded();
-    const now = new Date(toIsoDate());
+    const now = new Date();
     await this.pgOrm
       .insert(upstreamProviders)
       .values({
@@ -342,36 +505,282 @@ export class AccessRepository {
     };
   }
 
+  async createTenant(input: CreateTenantInput): Promise<TenantRecord> {
+    await this.ensureSeeded();
+    if (await this.tenantExists(input.tenantId)) {
+      throw new ConflictError(`Tenant ${input.tenantId} already exists`);
+    }
+    const now = new Date();
+    await this.pgOrm.insert(tenants).values({
+      id: input.tenantId,
+      name: input.tenantName ?? input.tenantId,
+      status: "active",
+      createdAt: now
+    });
+    return {
+      id: input.tenantId,
+      name: input.tenantName ?? input.tenantId,
+      status: "active",
+      createdAt: now.toISOString()
+    };
+  }
+
+  async listTenants(): Promise<TenantRecord[]> {
+    await this.ensureSeeded();
+    const rows = await this.pgOrm
+      .select({
+        id: tenants.id,
+        name: tenants.name,
+        status: tenants.status,
+        created_at: tenants.createdAt
+      })
+      .from(tenants);
+    return rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      status: row.status,
+      createdAt: toIsoDate(row.created_at) ?? ""
+    }));
+  }
+
+  async listProjects(tenantId?: string): Promise<ProjectRecord[]> {
+    await this.ensureSeeded();
+    const rows = tenantId
+      ? await this.pgOrm
+          .select({
+            id: projects.id,
+            tenant_id: projects.tenantId,
+            name: projects.name,
+            status: projects.status,
+            created_at: projects.createdAt
+          })
+          .from(projects)
+          .where(eq(projects.tenantId, tenantId))
+      : await this.pgOrm
+          .select({
+            id: projects.id,
+            tenant_id: projects.tenantId,
+            name: projects.name,
+            status: projects.status,
+            created_at: projects.createdAt
+          })
+          .from(projects);
+
+    return rows.map((row) => ({
+      id: row.id,
+      tenantId: row.tenant_id,
+      name: row.name,
+      status: row.status,
+      createdAt: toIsoDate(row.created_at) ?? ""
+    }));
+  }
+
+  async createProject(input: CreateProjectInput): Promise<SeedResult> {
+    await this.ensureSeeded();
+    if (!(await this.tenantExists(input.tenantId))) {
+      throw new NotFoundError(`Tenant ${input.tenantId} not found`);
+    }
+    if (await this.projectExists(input.projectId)) {
+      throw new ConflictError(`Project ${input.projectId} already exists`);
+    }
+
+    const now = new Date();
+    const scope = input.scope ?? "chat.write,usage.read";
+    const tokenLimit = input.tokenLimit ?? this.defaultTokenLimit;
+    const costLimit = input.costLimit ?? this.defaultCostLimit;
+    const apiKey = generateApiKeyRaw();
+    const apiKeyId = `api-key-${randomUUID()}`;
+
+    await this.pgOrm.transaction(async (tx) => {
+      await tx.insert(projects).values({
+        id: input.projectId,
+        tenantId: input.tenantId,
+        name: input.projectName ?? input.projectId,
+        status: "active",
+        createdAt: now
+      });
+      await tx.insert(apiKeys).values({
+        id: apiKeyId,
+        projectId: input.projectId,
+        keyHash: hashApiKey(apiKey),
+        keyPrefix: apiKey.slice(0, 8),
+        status: "active",
+        scope,
+        createdBy: input.createdBy ?? null,
+        createdAt: now
+      });
+      await tx.insert(projectQuotas).values({
+        projectId: input.projectId,
+        tokenLimit,
+        tokenUsed: 0,
+        costLimit: String(costLimit),
+        costUsed: "0",
+        updatedAt: now
+      });
+    });
+
+    return {
+      tenantId: input.tenantId,
+      projectId: input.projectId,
+      apiKeyId,
+      apiKey
+    };
+  }
+
+  async createApiKey(input: CreateApiKeyInput): Promise<{ apiKeyId: string; apiKey: string; projectId: string }> {
+    await this.ensureSeeded();
+    const project = await this.getProject(input.projectId);
+    if (!project) {
+      throw new NotFoundError(`Project ${input.projectId} not found`);
+    }
+    const scope = input.scope ?? "chat.write,usage.read";
+    const { apiKeyId, apiKey } = await this.insertApiKeyRecord(input.projectId, scope, input.createdBy);
+    return { apiKeyId, apiKey, projectId: input.projectId };
+  }
+
+  async listApiKeys(projectId: string): Promise<ApiKeyListItem[]> {
+    await this.ensureSeeded();
+    const project = await this.getProject(projectId);
+    if (!project) {
+      throw new NotFoundError(`Project ${projectId} not found`);
+    }
+
+    const rows = await this.pgOrm
+      .select({
+        id: apiKeys.id,
+        project_id: apiKeys.projectId,
+        key_prefix: apiKeys.keyPrefix,
+        status: apiKeys.status,
+        scope: apiKeys.scope,
+        created_by: apiKeys.createdBy,
+        expires_at: apiKeys.expiresAt,
+        revoked_at: apiKeys.revokedAt,
+        last_used_at: apiKeys.lastUsedAt,
+        last_used_ip: apiKeys.lastUsedIp,
+        created_at: apiKeys.createdAt
+      })
+      .from(apiKeys)
+      .where(eq(apiKeys.projectId, projectId));
+
+    return rows.map((row) => this.mapApiKeyListItem(row));
+  }
+
+  async revokeApiKey(apiKeyId: string): Promise<ApiKeyListItem> {
+    await this.ensureSeeded();
+    const rows = await this.pgOrm
+      .select({
+        id: apiKeys.id,
+        project_id: apiKeys.projectId,
+        key_prefix: apiKeys.keyPrefix,
+        status: apiKeys.status,
+        scope: apiKeys.scope,
+        created_by: apiKeys.createdBy,
+        expires_at: apiKeys.expiresAt,
+        revoked_at: apiKeys.revokedAt,
+        last_used_at: apiKeys.lastUsedAt,
+        last_used_ip: apiKeys.lastUsedIp,
+        created_at: apiKeys.createdAt
+      })
+      .from(apiKeys)
+      .where(eq(apiKeys.id, apiKeyId))
+      .limit(1);
+
+    const row = rows[0];
+    if (!row) {
+      throw new NotFoundError(`API key ${apiKeyId} not found`);
+    }
+    if (row.revoked_at) {
+      return this.mapApiKeyListItem(row);
+    }
+
+    const now = new Date();
+    await this.pgOrm
+      .update(apiKeys)
+      .set({ status: "revoked", revokedAt: now })
+      .where(eq(apiKeys.id, apiKeyId));
+
+    return this.mapApiKeyListItem({
+      ...row,
+      status: "revoked",
+      revoked_at: now
+    });
+  }
+
+  async rotateApiKey(apiKeyId: string, createdBy?: string): Promise<{ apiKeyId: string; apiKey: string; projectId: string }> {
+    await this.ensureSeeded();
+    const rows = await this.pgOrm
+      .select({
+        id: apiKeys.id,
+        project_id: apiKeys.projectId,
+        scope: apiKeys.scope,
+        revoked_at: apiKeys.revokedAt
+      })
+      .from(apiKeys)
+      .where(eq(apiKeys.id, apiKeyId))
+      .limit(1);
+
+    const row = rows[0];
+    if (!row) {
+      throw new NotFoundError(`API key ${apiKeyId} not found`);
+    }
+    if (!row.revoked_at) {
+      await this.revokeApiKey(apiKeyId);
+    }
+
+    const { apiKeyId: newId, apiKey } = await this.insertApiKeyRecord(row.project_id, row.scope, createdBy);
+    return { apiKeyId: newId, apiKey, projectId: row.project_id };
+  }
+
+  async touchApiKeyUsage(apiKeyId: string, ip?: string): Promise<void> {
+    const now = new Date();
+    await this.pgOrm
+      .update(apiKeys)
+      .set({
+        lastUsedAt: now,
+        lastUsedIp: ip ?? null
+      })
+      .where(eq(apiKeys.id, apiKeyId));
+  }
+
   async createTenantProjectApiKey(seed: TenantProjectApiKeySeed): Promise<SeedResult> {
     await this.ensureSeeded();
-    const now = toIsoDate();
-    const nowDate = new Date(now);
-    const apiKey = seed.apiKey ?? `tm_${randomUUID().replace(/-/g, "")}`;
-    const apiKeyId = `api-key-${randomUUID()}`;
+    if (await this.projectExists(seed.projectId)) {
+      throw new ConflictError(`Project ${seed.projectId} already exists`);
+    }
+
+    const now = new Date();
     const scope = seed.scope ?? "chat.write,usage.read";
     const tokenLimit = seed.tokenLimit ?? this.defaultTokenLimit;
     const costLimit = seed.costLimit ?? this.defaultCostLimit;
+    const apiKey = seed.apiKey ?? generateApiKeyRaw();
+    const apiKeyId = `api-key-${randomUUID()}`;
 
     await this.pgOrm.transaction(async (tx) => {
-      await tx
-        .insert(tenants)
-        .values({
+      if (!(await this.tenantExists(seed.tenantId))) {
+        await tx.insert(tenants).values({
           id: seed.tenantId,
           name: seed.tenantName ?? seed.tenantId,
           status: "active",
-          createdAt: nowDate
-        })
-        .onConflictDoNothing();
-      await tx
-        .insert(projects)
-        .values({
-          id: seed.projectId,
-          tenantId: seed.tenantId,
-          name: seed.projectName ?? seed.projectId,
-          status: "active",
-          createdAt: nowDate
-        })
-        .onConflictDoNothing();
+          createdAt: now
+        });
+      } else if (seed.tenantName) {
+        const existingTenant = await tx
+          .select({ name: tenants.name })
+          .from(tenants)
+          .where(eq(tenants.id, seed.tenantId))
+          .limit(1);
+        if (existingTenant[0] && existingTenant[0].name !== seed.tenantName) {
+          throw new ConflictError(`Tenant ${seed.tenantId} already exists with a different name`);
+        }
+      }
+
+      await tx.insert(projects).values({
+        id: seed.projectId,
+        tenantId: seed.tenantId,
+        name: seed.projectName ?? seed.projectId,
+        status: "active",
+        createdAt: now
+      });
       await tx.insert(apiKeys).values({
         id: apiKeyId,
         projectId: seed.projectId,
@@ -379,19 +788,17 @@ export class AccessRepository {
         keyPrefix: apiKey.slice(0, 8),
         status: "active",
         scope,
-        createdAt: nowDate
+        createdBy: seed.createdBy ?? null,
+        createdAt: now
       });
-      await tx
-        .insert(projectQuotas)
-        .values({
-          projectId: seed.projectId,
-          tokenLimit,
-          tokenUsed: 0,
-          costLimit: String(costLimit),
-          costUsed: "0",
-          updatedAt: nowDate
-        })
-        .onConflictDoNothing();
+      await tx.insert(projectQuotas).values({
+        projectId: seed.projectId,
+        tokenLimit,
+        tokenUsed: 0,
+        costLimit: String(costLimit),
+        costUsed: "0",
+        updatedAt: now
+      });
     });
 
     return {

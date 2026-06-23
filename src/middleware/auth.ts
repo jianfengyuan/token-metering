@@ -114,6 +114,7 @@ export function createAuthMiddleware(
         apiKeyId: authContext.apiKeyId,
         userId: authContext.userId
       });
+      void accessRepository.touchApiKeyUsage(identity.apiKeyId, req.ip);
       next();
       return;
     }

@@ -68,17 +68,43 @@ CREATE TABLE IF NOT EXISTS projects (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE IF NOT EXISTS api_keys (
-  id         TEXT PRIMARY KEY,
-  project_id TEXT NOT NULL REFERENCES projects(id),
-  key_hash   TEXT NOT NULL UNIQUE,
-  key_prefix TEXT NOT NULL,
-  status     TEXT NOT NULL DEFAULT 'active',
-  scope      TEXT NOT NULL DEFAULT '*',
-  expires_at TIMESTAMPTZ,
-  revoked_at TIMESTAMPTZ,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+CREATE TABLE IF NOT EXISTS users (
+  id            TEXT PRIMARY KEY,
+  email         TEXT NOT NULL UNIQUE,
+  name          TEXT NOT NULL,
+  password_hash TEXT,
+  platform_role TEXT,
+  status        TEXT NOT NULL DEFAULT 'active',
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS tenant_members (
+  tenant_id  TEXT NOT NULL REFERENCES tenants(id),
+  user_id    TEXT NOT NULL REFERENCES users(id),
+  role       TEXT NOT NULL DEFAULT 'member',
+  joined_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS api_keys (
+  id           TEXT PRIMARY KEY,
+  project_id   TEXT NOT NULL REFERENCES projects(id),
+  key_hash     TEXT NOT NULL UNIQUE,
+  key_prefix   TEXT NOT NULL,
+  status       TEXT NOT NULL DEFAULT 'active',
+  scope        TEXT NOT NULL DEFAULT '*',
+  created_by   TEXT REFERENCES users(id),
+  expires_at   TIMESTAMPTZ,
+  revoked_at   TIMESTAMPTZ,
+  last_used_at TIMESTAMPTZ,
+  last_used_ip TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- 兼容已有数据库：为 api_keys 追加 P0/P1 列
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS created_by   TEXT REFERENCES users(id);
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS last_used_at TIMESTAMPTZ;
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS last_used_ip TEXT;
 
 CREATE TABLE IF NOT EXISTS project_quotas (
   project_id  TEXT PRIMARY KEY REFERENCES projects(id),
@@ -174,6 +200,8 @@ CREATE TABLE IF NOT EXISTS audit_events (
 -- ----------------------------------------------------------------------------
 
 CREATE INDEX IF NOT EXISTS idx_projects_tenant_id ON projects(tenant_id);
+CREATE INDEX IF NOT EXISTS idx_tenant_members_user_id ON tenant_members(user_id);
+CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_api_keys_project_id ON api_keys(project_id);
 CREATE INDEX IF NOT EXISTS idx_api_keys_status ON api_keys(status);
 CREATE INDEX IF NOT EXISTS idx_model_provider_routes_active ON model_provider_routes(is_active);
